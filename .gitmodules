@@ -1,0 +1,3 @@
+[submodule "utils/js-geoscene-reader"]
+	path = utils/js-geoscene-reader
+	url = git@github.com:geofront-eu/js-geoscene-reader.git

@@ -1,0 +1,43 @@
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>Geocarve WebGL Viewer</title>
+  <script type="text/javascript" src="utils/js-geoscene-reader/gl-matrix-min.js"></script>
+  <script type="text/javascript" src="utils/js-geoscene-reader/geoscene-filereader.js"></script>
+  <script type="text/javascript" src="utils/webgl-utils.js"></script>
+  <script type="text/javascript" src="utils/webgl-debug.js"></script>  
+</head>
+<script type="text/javascript">
+    var gl; // gl instance
+    
+    function webGLStart() {
+      var canvas = document.getElementById("canvas");
+      try {
+        gl = canvas.getContext("experimental-webgl");
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+      } catch (e) {}
+      if (!gl) {
+        alert("Could not initialize WebGL");
+      }
+
+      gl.clearColor(0.0, 1.0, 0.0, 1.0);
+      gl.enable(gl.DEPTH_TEST);
+      
+      paintLoop();
+    }
+
+    function drawScene() {
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+    }
+
+    function paintLoop() {
+      requestAnimFrame(paintLoop);
+      drawScene();
+    }
+  </script>
+<body onload="webGLStart();">
+  <canvas id="canvas"  width="1200" height="800"></canvas>
+</body>
+</html>
