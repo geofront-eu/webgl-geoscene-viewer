@@ -23,6 +23,12 @@
 
       gl.clearColor(0.0, 1.0, 0.0, 1.0);
       gl.enable(gl.DEPTH_TEST);
+
+      var callback = function(object) {
+
+      };
+      // DEBUG - Local path for tests
+      callback = readGeoSceneFile("data/set0.geoscene", callback);
       
       paintLoop();
     }
