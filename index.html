@@ -10,8 +10,10 @@
 <script id="camera-frustum-lines-shader-fs" type="x-shader/x-fragment">
   precision highp float;
 
+  uniform vec4 uLineColor;
+
   void main(void) {
-    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+    gl_FragColor = uLineColor;
   }
 </script>
 <script id="camera-frustum-lines-shader-vs" type="x-shader/x-vertex">
@@ -124,6 +126,7 @@
       cameraFrustumLinesProgram.uGeoCastProjMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastProjMatrix");
       cameraFrustumLinesProgram.uGeoCastMVMatrix_Inverse = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastMVMatrix_Inverse");
       cameraFrustumLinesProgram.uGeoCastProjMatrix_Inverse = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastProjMatrix_Inverse");
+      cameraFrustumLinesProgram.uLineColor = gl.getUniformLocation(cameraFrustumLinesProgram, "uLineColor");
       cameraFrustumLinesProgram.aPosition = gl.getAttribLocation(cameraFrustumLinesProgram, "aPosition");      
       gl.enableVertexAttribArray(cameraFrustumLinesProgram.aPosition);
     }
@@ -203,48 +206,58 @@
       sphere_d += delta * -2.0;
     }
 
-    function drawSurface() {
-      var geoCastZSequenceObject = geoScene.geoCastZSequence.find(function(element, index, array) {
-        if(element.name == geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence[0])
-          return element;
-      });
-      if (geoCastZSequenceObject.geocast == undefined || geoCastZSequenceObject.geocast == null)
-        return false; // Not ready yet
-      // Draw camera frustum
-      gl.useProgram(cameraFrustumLinesProgram);
-      // Bind VBO, set the vertex attribute data and render
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.indices);
-      gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
-      gl.vertexAttribPointer(cameraFrustumLinesProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
-      gl.uniformMatrix4fv(cameraFrustumLinesProgram.uViewMVMatrix, false /* WebGL supports column-major only */, 
-        modelViewMatrix);      
-      gl.uniformMatrix4fv(cameraFrustumLinesProgram.uViewProjMatrix, false /* WebGL supports column-major only */, 
-        perspectiveMatrix);
-      gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastMVMatrix, false /* WebGL supports column-major only */, 
-        geoCastZSequenceObject.geocast.ModelviewMatrix);
-      var orthoOrPerspMatrix = (geoCastZSequenceObject.geocast.PerspMatrix != undefined) ? 
-                                geoCastZSequenceObject.geocast.PerspMatrix : geoCastZSequenceObject.geocast.OrthoMatrix;
-      var inverseOrthoOrPerspMatrix = mat4.create();
-      var geocastInverseMV = mat4.create();
-      mat4.invert(inverseOrthoOrPerspMatrix, orthoOrPerspMatrix);
-      mat4.invert(geocastInverseMV, geoCastZSequenceObject.geocast.ModelviewMatrix);
-      gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastProjMatrix, false /* WebGL supports column-major only */, 
-        orthoOrPerspMatrix);
-      gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastMVMatrix_Inverse, false /* WebGL supports column-major only */, 
-        geocastInverseMV);      
-      gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastProjMatrix_Inverse, false /* WebGL supports column-major only */, 
-        inverseOrthoOrPerspMatrix);
-      gl.drawElements(gl.LINES, camera_frustum_lines_data.indices_length, gl.UNSIGNED_SHORT, 0);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      return true;
+    function drawCameraFrustums() {
+      var drawFrustum = function(mvMatrix, pMatrix, color) {
+        var inverseMVMatrix = mat4.create();
+        var inversePMatrix = mat4.create();
+        mat4.invert(inverseMVMatrix, mvMatrix);
+        mat4.invert(inversePMatrix, pMatrix);
+        gl.useProgram(cameraFrustumLinesProgram);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.indices);
+        gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
+        gl.vertexAttribPointer(cameraFrustumLinesProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
+        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uViewMVMatrix, false, modelViewMatrix);
+        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uViewProjMatrix, false, perspectiveMatrix);
+        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastMVMatrix, false, mvMatrix);
+        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastProjMatrix, false, pMatrix);
+        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastMVMatrix_Inverse, false, inverseMVMatrix);      
+        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastProjMatrix_Inverse, false, inversePMatrix);
+        gl.uniform4fv(cameraFrustumLinesProgram.uLineColor, color);
+        gl.drawElements(gl.LINES, camera_frustum_lines_data.indices_length, gl.UNSIGNED_SHORT, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      }
+      var orthoOrPerspMatrix = function(geocastObject) {
+        return (geocastObject.PerspMatrix != undefined) ? 
+                geocastObject.PerspMatrix : geocastObject.OrthoMatrix;
+      }
+      var drawSequenceObjects = function(matchGroupSequence, geocastSequence, color) {
+        for (var objIndex in matchGroupSequence) {
+          var objName = matchGroupSequence[objIndex];
+          var geoCastSequenceObject = geocastSequence.find(function(element, index, array) {
+            if(element.name == objName)
+              return element;
+          });
+          if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
+            continue; // Sequence object not loaded yet
+          }
+          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
+          drawFrustum (geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix, color);
+        }
+      }
+      // Gain all ZSequence objects and draw them
+      drawSequenceObjects(geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence, 
+                          geoScene.geoCastZSequence, [0.5, 0.5, 0.5, 1.0]);
+
+      drawSequenceObjects(geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
+                          geoScene.geoCastSequence, [0.8, 0.0, 0.0, 1.0]);
     }
 
     function updateSceneMatrices() {
       mat4.identity(modelViewMatrix);
       mat4.identity(perspectiveMatrix);
 
-      // Calculate camera position (eye field) according to the spherical coords
+      // Calculate camera position (eye field) according to spherical coords
       var cameraPos = vec3.create();
       cameraPos[0] = sphere_d * Math.sin(degToRad(theta)) * Math.cos(degToRad(phi));  
       cameraPos[1] = sphere_d * Math.cos(degToRad(theta)) * Math.cos(degToRad(phi));
@@ -263,10 +276,8 @@
 
       updateSceneMatrices();
 
-      // Draw GeoCastZ camera frustum and surface (if ready)
-      var ready = drawSurface();
-      if(ready == false)
-        return; // Not ready yet
+      // Draw all camera frustums
+      drawCameraFrustums();
     }
 
     function paintLoop() {
