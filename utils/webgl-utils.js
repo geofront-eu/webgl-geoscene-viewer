@@ -226,3 +226,47 @@ function createImageFromTexture(gl, texture, width, height) {
 
   return canvas.toDataURL();
 }
+
+/**
+ * Utility function to get and compile a shader.
+ * @param {gl} gl context
+ * @param {id} shader script id
+ * @return {GLint} Compiled shader id created by gl.createShader()
+ *
+ * Example usage:
+ *
+ *     var vertexShader = getShader(gl, "vertex-shader-vs");
+ */
+function getShader(gl, id) {
+  var shaderScript = document.getElementById(id);
+  if (!shaderScript)
+      return null;
+
+  var str = "";
+  var k = shaderScript.firstChild;
+  while (k) {
+      if (k.nodeType == 3) { // Check for TEXT_NODE
+        str += k.textContent;
+      }
+      k = k.nextSibling;
+  }
+
+  var shader;
+  if (shaderScript.type == "x-shader/x-fragment") {
+    shader = gl.createShader(gl.FRAGMENT_SHADER);
+  } else if (shaderScript.type == "x-shader/x-vertex") {
+    shader = gl.createShader(gl.VERTEX_SHADER);
+  } else {
+    return null;
+  }
+
+  gl.shaderSource(shader, str);
+  gl.compileShader(shader);
+
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.log(gl.getShaderInfoLog(shader));
+    return null;
+  }
+
+  return shader;
+}
