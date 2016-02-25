@@ -36,8 +36,53 @@
 <script id="surface-shader-fs" type="x-shader/x-fragment">
   precision highp float;
 
+  #define SAMPLE_SLOTS 5
+
+  uniform mat4 uGeocastMVPMatrix[SAMPLE_SLOTS];
+  uniform sampler2D texGeocastSampler[SAMPLE_SLOTS];
+  uniform float boundSlots;
+
+  varying vec4 pass_discardFlag;
+  varying vec4 pass_aPosition;
+
+  bool inFrustum(mat4 M, vec3 p) {
+    vec4 Pclip = M * vec4(p, 1.);
+    return abs(Pclip.x) < Pclip.w && 
+           abs(Pclip.y) < Pclip.w && 
+           0. < Pclip.z && 
+           Pclip.z < Pclip.w;
+  }
+
   void main(void) {
-    gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+    if(pass_discardFlag.a < 0.999)
+      discard;
+
+    vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
+
+    vec4 aPosition = vec4(pass_aPosition.xyz / pass_aPosition.w, 1.0);
+
+    vec4 final_color = latticeBackground;
+    bool backgroundColor = true;
+
+    for (int i = 0; i < SAMPLE_SLOTS; ++i) {
+      if (float(i) >= boundSlots)
+        break;
+
+      if (inFrustum(uGeocastMVPMatrix[i], aPosition.xyz)) {
+        // In-projector region, do a texture lookup
+        vec4 Pclip = uGeocastMVPMatrix[i] * aPosition;
+        vec2 texture_uv = vec2((Pclip.x + Pclip.w) / (2. * Pclip.w), (Pclip.y + Pclip.w) / (2. * Pclip.w));
+        vec4 texel = texture2D(texGeocastSampler[i], texture_uv);
+        
+        if (backgroundColor) { // Substitute the background color if this is the first match
+          backgroundColor = false;
+          final_color = texel;
+        } else {
+          final_color = mix(final_color, texel, 0.5);
+        }
+      }
+    }
+    gl_FragColor = final_color;
   }
 </script>
 <script id="surface-shader-vs" type="x-shader/x-vertex">
@@ -52,17 +97,31 @@
   uniform mat4 uFloorProjMatrix;
   uniform mat4 uFloorMVMatrix_Inverse;
   uniform mat4 uFloorProjMatrix_Inverse;
+  uniform vec2 uFloorClipRange;
+
+  uniform sampler2D texDepthMapSampler;
+
+  varying vec4 pass_discardFlag;
+  varying vec4 pass_aPosition;
   
   void main(void) {
+
+    vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);    
+
+    vec4 depth_camspace;  // purpose: "image" a pixel of depth Z (its view vector) into camera space
+    depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1);
+
+    float model_depth = depth_camspace.z / depth_camspace.w;
+    // Discard background depths
+    pass_discardFlag = vec4(1.0, 1.0, 1.0, (depth.x == 1.0) ? 0.0 : 1.0);
 
     // Lattice has coords [0;1], this doesn't use the full screen extents of the projector [-1;1]. Rescale
     vec2 latticePos = vec2(aPosition.x, aPosition.y);
     latticePos = latticePos * 2.0 - 1.0;
 
-    vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(latticePos.xy,  0.0, 1);
+    vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(latticePos.xy,  model_depth, 1);
+    pass_aPosition = worldpos;
     gl_Position = uViewProjMatrix * uViewMVMatrix * worldpos;
-
-    //gl_Position = uViewProjMatrix * uViewMVMatrix * vec4(aPosition, 1.0);
   }
 </script>
 <script type="text/javascript">
@@ -87,7 +146,7 @@
       }
 
       setupGeometries();
-      setupShaderPrograms();
+      setupShaderPrograms();      
       setupInput(canvas);
 
       gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -96,6 +155,7 @@
       var geoSceneObjectReady = function(object) {
         geoScene = object;
         generateSceneLattices();
+        loadTextures();
       };      
       readGeoSceneFile("data/set0.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
@@ -168,6 +228,34 @@
       return vertices;
     }
 
+    var texturesMap = {};
+
+    function loadTextures() {
+      var loadTextureFromFile = function(geocastSequenceObject) {
+        texturesMap[geocastSequenceObject.name] = gl.createTexture();
+        texturesMap[geocastSequenceObject.name].image = new Image();
+        texturesMap[geocastSequenceObject.name].safeToRender = false;
+        texturesMap[geocastSequenceObject.name].image.onload = function () {
+          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name]);
+          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);        
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name].image);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+          texturesMap[geocastSequenceObject.name].safeToRender = true;
+        }
+        texturesMap[geocastSequenceObject.name].image.src = geocastSequenceObject.image;
+      };
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence,
+        geoScene.geoCastZSequence, loadTextureFromFile, true);
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
+        geoScene.geoCastSequence, loadTextureFromFile, true);
+    }
+
     var camera_frustum_lines_data;
 
     function setupGeometries() {
@@ -205,7 +293,7 @@
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
-      // Lattice data cannot be statically generated here - it depends on the image dimensions in the GeoScene (GeoCastZ)
+      // Lattice data cannot be statically generated here - it depends on the image dimensions in the GeoScene (GeoCastZ, see @generateSceneLattices())
     }
 
     var cameraFrustumLinesProgram;
@@ -248,6 +336,11 @@
       surfaceProgram.uFloorProjMatrix = gl.getUniformLocation(surfaceProgram, "uFloorProjMatrix");
       surfaceProgram.uFloorMVMatrix_Inverse = gl.getUniformLocation(surfaceProgram, "uFloorMVMatrix_Inverse");
       surfaceProgram.uFloorProjMatrix_Inverse = gl.getUniformLocation(surfaceProgram, "uFloorProjMatrix_Inverse");
+      surfaceProgram.texDepthMapSampler = gl.getUniformLocation(surfaceProgram, "texDepthMapSampler");
+      surfaceProgram.uFloorClipRange = gl.getUniformLocation(surfaceProgram, "uFloorClipRange");
+      surfaceProgram.uGeocastMVPMatrix = gl.getUniformLocation(surfaceProgram, "uGeocastMVPMatrix");
+      surfaceProgram.texGeocastSampler = gl.getUniformLocation(surfaceProgram, "texGeocastSampler[0]");
+      surfaceProgram.boundSlots = gl.getUniformLocation(surfaceProgram, "boundSlots");
     }
 
     var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
@@ -325,7 +418,7 @@
       sphere_d += delta * -2.0;
     }
 
-    function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, actionCallback) {
+    function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, actionCallback, ignoreGeocast) {
       var orthoOrPerspMatrix = function(geocastObject) {
         return (geocastObject.PerspMatrix != undefined) ? 
                 geocastObject.PerspMatrix : geocastObject.OrthoMatrix;
@@ -336,11 +429,15 @@
           if(element.name == objName)
             return element;
         });
-        if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
-          continue; // Sequence object not loaded yet
+        if (ignoreGeocast == false) {
+          if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
+            continue; // Sequence object not loaded yet
+          }
+          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
+          actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix);
+        } else {
+          actionCallback (geoCastSequenceObject);
         }
-        var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
-        actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix);
       }
     }
 
@@ -371,13 +468,13 @@
       };
       executeActionForObjectsInSequence(
         geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence,
-        geoScene.geoCastZSequence, drawSurfaceFrustumCallback);
+        geoScene.geoCastZSequence, drawSurfaceFrustumCallback, false);
       var drawCameraFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) {
         drawFrustum (mvMatrix, pMatrix, [0.8, 0.0, 0.0, 1.0]);
       };
       executeActionForObjectsInSequence(
         geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
-        geoScene.geoCastSequence, drawCameraFrustumCallback);
+        geoScene.geoCastSequence, drawCameraFrustumCallback, false);
     }
 
     function updateSceneMatrices() {
@@ -396,11 +493,46 @@
 
     function drawSurfaces() {
 
-      var drawSurface = function(geocastSequenceObject, mvMatrix, pMatrix) {        
+      var drawSurface = function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
         gl.useProgram(surfaceProgram);
+        
+        if (texturesMap[geocastSequenceObject.name].safeToRender == false)
+          return;
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name]);
+        gl.uniform1i(surfaceProgram.texDepthMapSampler, 0);
 
-        // TODO: bind array of cameras
+        var matricesFloatArray = [];
+        var availableTexId = 1;
+        var textureUnitsToUse = [];
+        var textureKeys = [];
+        var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
+          if (availableTexId > 15)
+            console.log("Insufficient texture units");
+          if(texturesMap[geocastSequenceObj.name].safeToRender == false)
+            return;
+          var mvpMat = mat4.create();
+          mat4.multiply(mvpMat, mvpMat, pMat);
+          var mvInverseMat = mat4.create(); // (Marco): Remember that Geocarve uses inverted MVs
+          mat4.invert(mvInverseMat, mvMat);
+          mat4.multiply(mvpMat, mvpMat, mvInverseMat);
+          matricesFloatArray.push.apply(matricesFloatArray, mvpMat);
+          textureUnitsToUse.push(availableTexId);
+          textureKeys.push(geocastSequenceObj.name);
+          ++availableTexId;
+        };
+        executeActionForObjectsInSequence(
+          geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
+          geoScene.geoCastSequence, bindGeocastInfo, false);
 
+        for (var i = 0; i < textureUnitsToUse.length; ++i) {
+          gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
+          gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]]);
+        }
+        gl.uniform1iv(surfaceProgram.texGeocastSampler, textureUnitsToUse);
+        gl.uniformMatrix4fv(surfaceProgram.uGeocastMVPMatrix, false, matricesFloatArray);
+        gl.uniform1fv(surfaceProgram.boundSlots, [textureUnitsToUse.length]);
+        
         var inverseMVMatrix = mat4.create();
         var inversePMatrix = mat4.create();
         mat4.invert(inverseMVMatrix, mvMatrix);
@@ -411,6 +543,9 @@
         gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix_Inverse, false, inversePMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uViewMVMatrix, false, modelViewMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uViewProjMatrix, false, perspectiveMatrix);
+        var zRange = (geocastSequenceObject.geocast.ProjRange != undefined) ? 
+                      geocastSequenceObject.geocast.ProjRange : geocastSequenceObject.geocast.ClipRange;
+        gl.uniform2fv(surfaceProgram.uFloorClipRange, zRange);
 
         var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
         if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
@@ -419,11 +554,12 @@
         gl.vertexAttribPointer(surfaceProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, latticeGridCache[resKey].n_of_vertices);
         
+        gl.bindTexture(gl.TEXTURE_2D, null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
       };
       executeActionForObjectsInSequence(
         geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence, 
-        geoScene.geoCastZSequence, drawSurface);
+        geoScene.geoCastZSequence, drawSurface, false);
     }
 
     function drawScene() {
