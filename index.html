@@ -54,7 +54,12 @@
   uniform mat4 uFloorProjMatrix_Inverse;
   
   void main(void) {
-    vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(aPosition.xy,  0.0, 1);
+
+    // Lattice has coords [0;1], this doesn't use the full screen extents of the projector [-1;1]. Rescale
+    vec2 latticePos = vec2(aPosition.x, aPosition.y);
+    latticePos = latticePos * 2.0 - 1.0;
+
+    vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(latticePos.xy,  0.0, 1);
     gl_Position = uViewProjMatrix * uViewMVMatrix * worldpos;
 
     //gl_Position = uViewProjMatrix * uViewMVMatrix * vec4(aPosition, 1.0);
@@ -90,14 +95,80 @@
 
       var geoSceneObjectReady = function(object) {
         geoScene = object;
+        generateSceneLattices();
       };      
       readGeoSceneFile("data/set0.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
 
+    var latticeGridCache = {}; // A cache for different resolution lattices
+
+    function generateSceneLattices() {
+      for (var i = 0; i < geoScene.geoCastZSequence.length; ++i) {
+        var sizeKey = geoScene.geoCastZSequence[i].size[0] + 'x' + geoScene.geoCastZSequence[i].size[1];
+        if (latticeGridCache.sizeKey == undefined) {
+          latticeGridCache[sizeKey] = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[sizeKey]);
+          var vbo_data = generateArbitraryDimensionLattice(geoScene.geoCastZSequence[i].size[0], geoScene.geoCastZSequence[i].size[1]);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
+          latticeGridCache[sizeKey].n_of_vertices = vbo_data.length / 3; // Number of vertices to use
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+      }      
+    }
+
+    function generateArbitraryDimensionLattice(width, height) { // Generates a lattice of (width x height) vertices with
+                                                                // normalized coords in the range [0;1]x[0;1]
+      var vertices = new Float32Array(((2 * (width + 1 /* Last two for degenerate vertices*/)) * height) * 3 /* xyz */);
+      var normalizeX = function(value) { // Normalize a value between [0;width] to the range [0;1]
+        return value / width;
+      }
+      var normalizeY = function(value) { // Normalize a value between [0;height] to the range [0;1]
+        return value / height;
+      }
+      for (var y = 0; y < height - 1; ++y) {
+        // 1 -- 2
+        // |  / |
+        // | /  |
+        // 5 -- 6
+
+        var base_off = (y * (2 * (width + 1))) * 3;
+
+        // Insert 1 and 5
+        vertices[ base_off + 0 ] = normalizeX(0 + 0.5);
+        vertices[ base_off + 1 ] = normalizeY(y + 0.5);
+        vertices[ base_off + 2 ] = 0;
+
+        vertices[ base_off + 3 ] = normalizeX(0 + 0.5);
+        vertices[ base_off + 4 ] = -normalizeY(y + 1.5);
+        vertices[ base_off + 5 ] = 0;
+
+        for (var x = 0; x < width - 1; ++x) {
+
+           // Insert 2 and 6
+           vertices[ base_off + (x * 2 * 3) + 0 ] = normalizeX(x + 1.5);
+           vertices[ base_off + (x * 2 * 3) + 1 ] = normalizeY(y + 0.5);
+           vertices[ base_off + (x * 2 * 3) + 2 ] = 0;
+
+           vertices[ base_off + (x * 2 * 3) + 3 ] = normalizeX(x + 1.5);
+           vertices[ base_off + (x * 2 * 3) + 4 ] = normalizeY(y + 1.5);
+           vertices[ base_off + (x * 2 * 3) + 5 ] = 0;
+        }
+
+        // Insert two extra points to form degenerate triangles (end of row)
+        vertices[ base_off + (width * 2 * 3) + 0 ] = vertices[ base_off + (width * 2 * 3) + 0 - 3 ];
+        vertices[ base_off + (width * 2 * 3) + 1 ] = vertices[ base_off + (width * 2 * 3) + 1 - 3 ];
+        vertices[ base_off + (width * 2 * 3) + 2 ] = vertices[ base_off + (width * 2 * 3) + 2 - 3 ];
+
+        vertices[ base_off + (width * 2 * 3) + 3 ] = normalizeX(0 + 0.5);
+        vertices[ base_off + (width * 2 * 3) + 4 ] = normalizeY(y + 2.5);
+        vertices[ base_off + (width * 2 * 3) + 5 ] = 0;
+      }
+      return vertices;
+    }
+
     var camera_frustum_lines_data;
-    var lattice_data;
 
     function setupGeometries() {
       camera_frustum_lines_data = gl.createBuffer();
@@ -134,25 +205,7 @@
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
-      lattice_data = gl.createBuffer(); // TODO lattice
-      gl.bindBuffer(gl.ARRAY_BUFFER, lattice_data);
-      vbo_data = [
-        -1.0, -1.0,0, 
-        -1.0, 1.0,0,
-        1.0, 1.0,0,
-        1.0, -1.0, 0
-      ];
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
-      lattice_data.indices = gl.createBuffer();
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lattice_data.indices);
-      var indices = [
-        0, 1, 2,
-        0, 2, 3
-      ];
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
-      lattice_data.indices_length = indices.length;
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+      // Lattice data cannot be statically generated here - it depends on the image dimensions in the GeoScene (GeoCastZ)
     }
 
     var cameraFrustumLinesProgram;
@@ -287,7 +340,7 @@
           continue; // Sequence object not loaded yet
         }
         var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
-        actionCallback (geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix);
+        actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix);
       }
     }
 
@@ -313,13 +366,13 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
       }      
       // Gain all ZSequence objects and draw them
-      var drawSurfaceFrustumCallback = function(mvMatrix, pMatrix) {
+      var drawSurfaceFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) {
         drawFrustum (mvMatrix, pMatrix, [0.5, 0.5, 0.5, 1.0]);
       };
       executeActionForObjectsInSequence(
         geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence,
         geoScene.geoCastZSequence, drawSurfaceFrustumCallback);
-      var drawCameraFrustumCallback = function(mvMatrix, pMatrix) {
+      var drawCameraFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) {
         drawFrustum (mvMatrix, pMatrix, [0.8, 0.0, 0.0, 1.0]);
       };
       executeActionForObjectsInSequence(
@@ -343,25 +396,30 @@
 
     function drawSurfaces() {
 
-      var drawSurface = function(mvMatrix, pMatrix) {
+      var drawSurface = function(geocastSequenceObject, mvMatrix, pMatrix) {        
+        gl.useProgram(surfaceProgram);
+
+        // TODO: bind array of cameras
+
         var inverseMVMatrix = mat4.create();
         var inversePMatrix = mat4.create();
         mat4.invert(inverseMVMatrix, mvMatrix);
         mat4.invert(inversePMatrix, pMatrix);
-        gl.useProgram(surfaceProgram);
-        // TODO: bind array of cameras
         gl.uniformMatrix4fv(surfaceProgram.uFloorMVMatrix, false, mvMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix, false, pMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uFloorMVMatrix_Inverse, false, inverseMVMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix_Inverse, false, inversePMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uViewMVMatrix, false, modelViewMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uViewProjMatrix, false, perspectiveMatrix);
-        gl.bindBuffer(gl.ARRAY_BUFFER, lattice_data);
+
+        var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
+        if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
+          return; // Lattice hasn't been created yet / object not ready
+        gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[resKey]);
         gl.vertexAttribPointer(surfaceProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lattice_data.indices);
-        gl.drawElements(gl.TRIANGLES, lattice_data.indices_length, gl.UNSIGNED_SHORT, 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, latticeGridCache[resKey].n_of_vertices);
+        
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
       };
       executeActionForObjectsInSequence(
         geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence, 
