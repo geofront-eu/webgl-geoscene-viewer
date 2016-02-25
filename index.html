@@ -157,7 +157,7 @@
         generateSceneLattices();
         loadTextures();
       };      
-      readGeoSceneFile("data/set0.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+      readGeoSceneFile("data/Raw.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
@@ -248,12 +248,14 @@
         }
         texturesMap[geocastSequenceObject.name].image.src = geocastSequenceObject.image;
       };
-      executeActionForObjectsInSequence(
-        geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence,
-        geoScene.geoCastZSequence, loadTextureFromFile, true);
-      executeActionForObjectsInSequence(
-        geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
-        geoScene.geoCastSequence, loadTextureFromFile, true);
+      for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
+        executeActionForObjectsInSequence(
+          geoScene.matchGroupSequence[i].matchSurfaceSequence,
+          geoScene.geoCastZSequence, loadTextureFromFile, true);
+        executeActionForObjectsInSequence(
+          geoScene.matchGroupSequence[i].matchCamSequence, 
+          geoScene.geoCastSequence, loadTextureFromFile, true);
+      }
     }
 
     var camera_frustum_lines_data;
@@ -359,6 +361,19 @@
       canvas.onmousemove = handleMouseMove;
       canvas.addEventListener('mouseout', onMouseOutOfCanvas, true); // Stop canvas input if mouse gets out of it
       canvas.onwheel = handleMouseWheel;
+      document.onkeydown = handleKeyDown;
+    }
+
+    function handleKeyDown(event) {
+      var key = event.keyCode || event.which;
+      switch (key) {
+        case 39: { // Right keyboard arrow
+          currentMatchGroup = Math.min(currentMatchGroup + 1, geoScene.matchGroupSequence.length - 1);
+        } break;
+        case 37: { // Left keyboard arrow
+          currentMatchGroup = Math.max(0, currentMatchGroup - 1);
+        } break;
+      }
     }
 
     function onMouseOutOfCanvas(event) {
@@ -429,6 +444,8 @@
           if(element.name == objName)
             return element;
         });
+        if (geoCastSequenceObject == undefined || geoCastSequenceObject == null)
+          console.log("Could not find a geocast sequence object with key '" + objName + "'");
         if (ignoreGeocast == false) {
           if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
             continue; // Sequence object not loaded yet
