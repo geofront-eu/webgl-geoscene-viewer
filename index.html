@@ -33,6 +33,33 @@
     gl_Position = uViewProjMatrix * uViewMVMatrix * (uGeoCastMVMatrix * uGeoCastProjMatrix_Inverse *  vec4(aPosition.xyz, 1.0));
   }
 </script>
+<script id="surface-shader-fs" type="x-shader/x-fragment">
+  precision highp float;
+
+  void main(void) {
+    gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+  }
+</script>
+<script id="surface-shader-vs" type="x-shader/x-vertex">
+  precision highp float;
+  attribute vec3 aPosition; // Lattice data
+
+  // Scene data
+  uniform mat4 uViewMVMatrix;
+  uniform mat4 uViewProjMatrix;
+  // Floor data
+  uniform mat4 uFloorMVMatrix;
+  uniform mat4 uFloorProjMatrix;
+  uniform mat4 uFloorMVMatrix_Inverse;
+  uniform mat4 uFloorProjMatrix_Inverse;
+  
+  void main(void) {
+    vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(aPosition.xy,  0.0, 1);
+    gl_Position = uViewProjMatrix * uViewMVMatrix * worldpos;
+
+    //gl_Position = uViewProjMatrix * uViewMVMatrix * vec4(aPosition, 1.0);
+  }
+</script>
 <script type="text/javascript">
     var gl; // gl instance
 
@@ -70,6 +97,7 @@
     }
 
     var camera_frustum_lines_data;
+    var lattice_data;
 
     function setupGeometries() {
       camera_frustum_lines_data = gl.createBuffer();
@@ -105,9 +133,30 @@
       camera_frustum_lines_data.indices_length = indices.length;
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+      lattice_data = gl.createBuffer(); // TODO lattice
+      gl.bindBuffer(gl.ARRAY_BUFFER, lattice_data);
+      vbo_data = [
+        -1.0, -1.0,0, 
+        -1.0, 1.0,0,
+        1.0, 1.0,0,
+        1.0, -1.0, 0
+      ];
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
+      lattice_data.indices = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lattice_data.indices);
+      var indices = [
+        0, 1, 2,
+        0, 2, 3
+      ];
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+      lattice_data.indices_length = indices.length;
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
     }
 
     var cameraFrustumLinesProgram;
+    var surfaceProgram;
 
     function setupShaderPrograms() {      
       var vertexShader = getShader(gl, "camera-frustum-lines-shader-vs");
@@ -119,7 +168,8 @@
       if (!gl.getProgramParameter(cameraFrustumLinesProgram, gl.LINK_STATUS))
           console.log("Could not initialize shaders");
       gl.useProgram(cameraFrustumLinesProgram);
-      // Bind uniforms and attributes      
+      cameraFrustumLinesProgram.aPosition = gl.getAttribLocation(cameraFrustumLinesProgram, "aPosition");      
+      gl.enableVertexAttribArray(cameraFrustumLinesProgram.aPosition);
       cameraFrustumLinesProgram.uViewMVMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uViewMVMatrix");
       cameraFrustumLinesProgram.uViewProjMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uViewProjMatrix");
       cameraFrustumLinesProgram.uGeoCastMVMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastMVMatrix");
@@ -127,8 +177,24 @@
       cameraFrustumLinesProgram.uGeoCastMVMatrix_Inverse = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastMVMatrix_Inverse");
       cameraFrustumLinesProgram.uGeoCastProjMatrix_Inverse = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastProjMatrix_Inverse");
       cameraFrustumLinesProgram.uLineColor = gl.getUniformLocation(cameraFrustumLinesProgram, "uLineColor");
-      cameraFrustumLinesProgram.aPosition = gl.getAttribLocation(cameraFrustumLinesProgram, "aPosition");      
-      gl.enableVertexAttribArray(cameraFrustumLinesProgram.aPosition);
+      
+      vertexShader = getShader(gl, "surface-shader-vs");
+      fragmentShader = getShader(gl, "surface-shader-fs");
+      surfaceProgram = gl.createProgram();
+      gl.attachShader(surfaceProgram, vertexShader);
+      gl.attachShader(surfaceProgram, fragmentShader);
+      gl.linkProgram(surfaceProgram);
+      if (!gl.getProgramParameter(surfaceProgram, gl.LINK_STATUS))
+          console.log("Could not initialize shaders");
+      gl.useProgram(surfaceProgram);
+      surfaceProgram.aPosition = gl.getAttribLocation(surfaceProgram, "aPosition");      
+      gl.enableVertexAttribArray(surfaceProgram.aPosition);
+      surfaceProgram.uViewMVMatrix = gl.getUniformLocation(surfaceProgram, "uViewMVMatrix");
+      surfaceProgram.uViewProjMatrix = gl.getUniformLocation(surfaceProgram, "uViewProjMatrix");
+      surfaceProgram.uFloorMVMatrix = gl.getUniformLocation(surfaceProgram, "uFloorMVMatrix");
+      surfaceProgram.uFloorProjMatrix = gl.getUniformLocation(surfaceProgram, "uFloorProjMatrix");
+      surfaceProgram.uFloorMVMatrix_Inverse = gl.getUniformLocation(surfaceProgram, "uFloorMVMatrix_Inverse");
+      surfaceProgram.uFloorProjMatrix_Inverse = gl.getUniformLocation(surfaceProgram, "uFloorProjMatrix_Inverse");
     }
 
     var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
@@ -206,6 +272,25 @@
       sphere_d += delta * -2.0;
     }
 
+    function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, actionCallback) {
+      var orthoOrPerspMatrix = function(geocastObject) {
+        return (geocastObject.PerspMatrix != undefined) ? 
+                geocastObject.PerspMatrix : geocastObject.OrthoMatrix;
+      }
+      for (var objIndex in matchGroupSequence) {
+        var objName = matchGroupSequence[objIndex];
+        var geoCastSequenceObject = geocastSequence.find(function(element, index, array) {
+          if(element.name == objName)
+            return element;
+        });
+        if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
+          continue; // Sequence object not loaded yet
+        }
+        var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
+        actionCallback (geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix);
+      }
+    }
+
     function drawCameraFrustums() {
       var drawFrustum = function(mvMatrix, pMatrix, color) {
         var inverseMVMatrix = mat4.create();
@@ -226,31 +311,20 @@
         gl.drawElements(gl.LINES, camera_frustum_lines_data.indices_length, gl.UNSIGNED_SHORT, 0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      }
-      var orthoOrPerspMatrix = function(geocastObject) {
-        return (geocastObject.PerspMatrix != undefined) ? 
-                geocastObject.PerspMatrix : geocastObject.OrthoMatrix;
-      }
-      var drawSequenceObjects = function(matchGroupSequence, geocastSequence, color) {
-        for (var objIndex in matchGroupSequence) {
-          var objName = matchGroupSequence[objIndex];
-          var geoCastSequenceObject = geocastSequence.find(function(element, index, array) {
-            if(element.name == objName)
-              return element;
-          });
-          if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
-            continue; // Sequence object not loaded yet
-          }
-          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
-          drawFrustum (geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix, color);
-        }
-      }
+      }      
       // Gain all ZSequence objects and draw them
-      drawSequenceObjects(geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence, 
-                          geoScene.geoCastZSequence, [0.5, 0.5, 0.5, 1.0]);
-
-      drawSequenceObjects(geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
-                          geoScene.geoCastSequence, [0.8, 0.0, 0.0, 1.0]);
+      var drawSurfaceFrustumCallback = function(mvMatrix, pMatrix) {
+        drawFrustum (mvMatrix, pMatrix, [0.5, 0.5, 0.5, 1.0]);
+      };
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence,
+        geoScene.geoCastZSequence, drawSurfaceFrustumCallback);
+      var drawCameraFrustumCallback = function(mvMatrix, pMatrix) {
+        drawFrustum (mvMatrix, pMatrix, [0.8, 0.0, 0.0, 1.0]);
+      };
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
+        geoScene.geoCastSequence, drawCameraFrustumCallback);
     }
 
     function updateSceneMatrices() {
@@ -267,6 +341,33 @@
       mat4.perspective(perspectiveMatrix, degToRad(45), gl.viewportWidth / gl.viewportHeight, 0.1, 5000.0);
     }
 
+    function drawSurfaces() {
+
+      var drawSurface = function(mvMatrix, pMatrix) {
+        var inverseMVMatrix = mat4.create();
+        var inversePMatrix = mat4.create();
+        mat4.invert(inverseMVMatrix, mvMatrix);
+        mat4.invert(inversePMatrix, pMatrix);
+        gl.useProgram(surfaceProgram);
+        // TODO: bind array of cameras
+        gl.uniformMatrix4fv(surfaceProgram.uFloorMVMatrix, false, mvMatrix);
+        gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix, false, pMatrix);
+        gl.uniformMatrix4fv(surfaceProgram.uFloorMVMatrix_Inverse, false, inverseMVMatrix);
+        gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix_Inverse, false, inversePMatrix);
+        gl.uniformMatrix4fv(surfaceProgram.uViewMVMatrix, false, modelViewMatrix);
+        gl.uniformMatrix4fv(surfaceProgram.uViewProjMatrix, false, perspectiveMatrix);
+        gl.bindBuffer(gl.ARRAY_BUFFER, lattice_data);
+        gl.vertexAttribPointer(surfaceProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lattice_data.indices);
+        gl.drawElements(gl.TRIANGLES, lattice_data.indices_length, gl.UNSIGNED_SHORT, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+      };
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence, 
+        geoScene.geoCastZSequence, drawSurface);
+    }
+
     function drawScene() {
       if (geoScene == null)
         return; // Still loading..
@@ -275,9 +376,8 @@
       gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
 
       updateSceneMatrices();
-
-      // Draw all camera frustums
       drawCameraFrustums();
+      drawSurfaces();
     }
 
     function paintLoop() {
