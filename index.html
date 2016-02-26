@@ -45,12 +45,12 @@
   varying vec4 pass_discardFlag;
   varying vec4 pass_aPosition;
 
-  bool inFrustum(mat4 M, vec3 p) {
-    vec4 Pclip = M * vec4(p, 1.);
-    return abs(Pclip.x) < Pclip.w && 
-           abs(Pclip.y) < Pclip.w && 
-           0. < Pclip.z && 
-           Pclip.z < Pclip.w;
+  bool inFrustum(mat4 M, vec4 p) {
+    vec4 Pclip = M * p;
+    return abs(Pclip.x) <= Pclip.w && 
+           abs(Pclip.y) <= Pclip.w && 
+           0. <= abs(Pclip.z) && 
+           abs(Pclip.z) <= Pclip.w;
   }
 
   void main(void) {
@@ -59,7 +59,7 @@
 
     vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
 
-    vec4 aPosition = vec4(pass_aPosition.xyz / pass_aPosition.w, 1.0);
+    vec4 aPosition = pass_aPosition;
 
     vec4 final_color = latticeBackground;
     bool backgroundColor = true;
@@ -68,7 +68,7 @@
       if (float(i) >= boundSlots)
         break;
 
-      if (inFrustum(uGeocastMVPMatrix[i], aPosition.xyz)) {
+      if (inFrustum(uGeocastMVPMatrix[i], aPosition)) {
         // In-projector region, do a texture lookup
         vec4 Pclip = uGeocastMVPMatrix[i] * aPosition;
         vec2 texture_uv = vec2((Pclip.x + Pclip.w) / (2. * Pclip.w), (Pclip.y + Pclip.w) / (2. * Pclip.w));
@@ -109,7 +109,7 @@
     vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);    
 
     vec4 depth_camspace;  // purpose: "image" a pixel of depth Z (its view vector) into camera space
-    depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1);
+    depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1.);
 
     float model_depth = depth_camspace.z / depth_camspace.w;
     // Discard background depths
@@ -201,19 +201,19 @@
         vertices[ base_off + 2 ] = 0;
 
         vertices[ base_off + 3 ] = normalizeX(0 + 0.5);
-        vertices[ base_off + 4 ] = -normalizeY(y + 1.5);
+        vertices[ base_off + 4 ] = normalizeY(y + 1.5);
         vertices[ base_off + 5 ] = 0;
 
         for (var x = 0; x < width - 1; ++x) {
 
            // Insert 2 and 6
-           vertices[ base_off + (x * 2 * 3) + 0 ] = normalizeX(x + 1.5);
-           vertices[ base_off + (x * 2 * 3) + 1 ] = normalizeY(y + 0.5);
-           vertices[ base_off + (x * 2 * 3) + 2 ] = 0;
+           vertices[ base_off + ((x + 1 /* 1 and 5 are already in place */) * 2 * 3) + 0 ] = normalizeX(x + 1.5);
+           vertices[ base_off + ((x + 1) * 2 * 3) + 1 ] = normalizeY(y + 0.5);
+           vertices[ base_off + ((x + 1) * 2 * 3) + 2 ] = 0;
 
-           vertices[ base_off + (x * 2 * 3) + 3 ] = normalizeX(x + 1.5);
-           vertices[ base_off + (x * 2 * 3) + 4 ] = normalizeY(y + 1.5);
-           vertices[ base_off + (x * 2 * 3) + 5 ] = 0;
+           vertices[ base_off + ((x + 1) * 2 * 3) + 3 ] = normalizeX(x + 1.5);
+           vertices[ base_off + ((x + 1) * 2 * 3) + 4 ] = normalizeY(y + 1.5);
+           vertices[ base_off + ((x + 1) * 2 * 3) + 5 ] = 0;
         }
 
         // Insert two extra points to form degenerate triangles (end of row)
@@ -221,8 +221,8 @@
         vertices[ base_off + (width * 2 * 3) + 1 ] = vertices[ base_off + (width * 2 * 3) + 1 - 3 ];
         vertices[ base_off + (width * 2 * 3) + 2 ] = vertices[ base_off + (width * 2 * 3) + 2 - 3 ];
 
-        vertices[ base_off + (width * 2 * 3) + 3 ] = normalizeX(0 + 0.5);
-        vertices[ base_off + (width * 2 * 3) + 4 ] = normalizeY(y + 2.5);
+        vertices[ base_off + (width * 2 * 3) + 3 ] = normalizeX(0 + 0.5); // Like 5
+        vertices[ base_off + (width * 2 * 3) + 4 ] = normalizeY(y + 1.5);
         vertices[ base_off + (width * 2 * 3) + 5 ] = 0;
       }
       return vertices;
@@ -237,7 +237,7 @@
         texturesMap[geocastSequenceObject.name].safeToRender = false;
         texturesMap[geocastSequenceObject.name].image.onload = function () {
           gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name]);
-          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);        
+          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name].image);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -348,7 +348,7 @@
     var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
     var theta = 200.0; // Degrees spherical coord
     var phi = 30.0;   // Degrees spherical coord
-    var sphere_d = 500.0; // Start spherical distance
+    var sphere_d = 100.0; // Start spherical distance
 
     var mouseDown = false;
     var mouseDownElementId;
