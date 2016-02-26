@@ -37,13 +37,16 @@
   precision highp float;
 
   #define SAMPLE_SLOTS 5
+  #extension GL_OES_standard_derivatives : enable
 
   uniform mat4 uGeocastMVPMatrix[SAMPLE_SLOTS];
   uniform sampler2D texGeocastSampler[SAMPLE_SLOTS];
-  uniform float boundSlots;
+  uniform float uBoundSlots;
 
   varying vec4 pass_discardFlag;
   varying vec4 pass_aPosition;
+  varying vec3 pass_barycentricCoords;
+  uniform float uShowWireframe;
 
   bool inFrustum(mat4 M, vec4 p) {
     vec4 Pclip = M * p;
@@ -53,36 +56,48 @@
            abs(Pclip.z) <= Pclip.w;
   }
 
+  float edgeFactor() {
+    vec3 d = fwidth(pass_barycentricCoords);
+    vec3 a3 = smoothstep(vec3(0.0), d*1.5, pass_barycentricCoords);
+    return min(min(a3.x, a3.y), a3.z);
+  }
+
   void main(void) {
+
     if(pass_discardFlag.a < 0.999)
       discard;
 
-    vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
+    if(uShowWireframe == 0.0 || !any(lessThan(pass_barycentricCoords, vec3(0.02)))) { // Texture lookup shading
 
-    vec4 aPosition = pass_aPosition;
+      vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
 
-    vec4 final_color = latticeBackground;
-    bool backgroundColor = true;
+      vec4 aPosition = pass_aPosition;
 
-    for (int i = 0; i < SAMPLE_SLOTS; ++i) {
-      if (float(i) >= boundSlots)
-        break;
+      vec4 final_color = latticeBackground;
+      bool backgroundColor = true;
 
-      if (inFrustum(uGeocastMVPMatrix[i], aPosition)) {
-        // In-projector region, do a texture lookup
-        vec4 Pclip = uGeocastMVPMatrix[i] * aPosition;
-        vec2 texture_uv = vec2((Pclip.x + Pclip.w) / (2. * Pclip.w), (Pclip.y + Pclip.w) / (2. * Pclip.w));
-        vec4 texel = texture2D(texGeocastSampler[i], texture_uv);
-        
-        if (backgroundColor) { // Substitute the background color if this is the first match
-          backgroundColor = false;
-          final_color = texel;
-        } else {
-          final_color = mix(final_color, texel, 0.5);
+      for (int i = 0; i < SAMPLE_SLOTS; ++i) {
+        if (float(i) >= uBoundSlots)
+          break;
+
+        if (inFrustum(uGeocastMVPMatrix[i], aPosition)) {
+          // In-projector region, do a texture lookup
+          vec4 Pclip = uGeocastMVPMatrix[i] * aPosition;
+          vec2 texture_uv = vec2((Pclip.x + Pclip.w) / (2. * Pclip.w), (Pclip.y + Pclip.w) / (2. * Pclip.w));
+          vec4 texel = texture2D(texGeocastSampler[i], texture_uv);
+          
+          if (backgroundColor) { // Substitute the background color if this is the first match
+            backgroundColor = false;
+            final_color = texel;
+          } else {
+            final_color = mix(final_color, texel, 0.5);
+          }
         }
       }
+      gl_FragColor = final_color;
+    } else { // Wireframe anti-aliased shading
+      gl_FragColor = vec4(0.0, 0.0, 0.0, (1.0 - edgeFactor())*0.95);
     }
-    gl_FragColor = final_color;
   }
 </script>
 <script id="surface-shader-vs" type="x-shader/x-vertex">
@@ -103,8 +118,14 @@
 
   varying vec4 pass_discardFlag;
   varying vec4 pass_aPosition;
+  varying vec3 pass_barycentricCoords;
   
   void main(void) {
+
+    // Unpack from the Z-component the barycentric coords
+    pass_barycentricCoords = vec3(aPosition.z == 100.0 ? 1.0 : 0.0,
+                                  aPosition.z == 10.0 ? 1.0 : 0.0,
+                                  aPosition.z == 1.0 ? 1.0 : 0.0);
 
     vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);    
 
@@ -144,6 +165,7 @@
       if (!gl) {
         console.log("Could not initialize WebGL");
       }
+      gl.getExtension('OES_standard_derivatives');
 
       setupGeometries();
       setupShaderPrograms();      
@@ -171,6 +193,13 @@
           latticeGridCache[sizeKey] = gl.createBuffer();
           gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[sizeKey]);
           var vbo_data = generateArbitraryDimensionLattice(geoScene.geoCastZSequence[i].size[0], geoScene.geoCastZSequence[i].size[1]);
+          for (var i = 2, bc = 100; i < vbo_data.length; i += 3) { // Encode 100, 10, 1 as barycentric coords in the unused Z coord
+            vbo_data[i] = bc;
+            if (bc == 1)
+              bc = 100;
+            else
+              bc /= 10;
+          }
           gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
           latticeGridCache[sizeKey].n_of_vertices = vbo_data.length / 3; // Number of vertices to use
           gl.bindBuffer(gl.ARRAY_BUFFER, null);
@@ -180,7 +209,8 @@
 
     function generateArbitraryDimensionLattice(width, height) { // Generates a lattice of (width x height) vertices with
                                                                 // normalized coords in the range [0;1]x[0;1]
-      var vertices = new Float32Array(((2 * (width + 1 /* Last two for degenerate vertices*/)) * height) * 3 /* xyz */);
+      var vertices = new Float32Array(((2 * (width + 1 /* Last two for degenerate vertices*/)) * (height - 1)) * 3 /* xyz */ 
+        - 2 * 3 /* Last row doesn't need the two degenerate vertices at the end */);
       var normalizeX = function(value) { // Normalize a value between [0;width] to the range [0;1]
         return value / width;
       }
@@ -216,14 +246,17 @@
            vertices[ base_off + ((x + 1) * 2 * 3) + 5 ] = 0;
         }
 
-        // Insert two extra points to form degenerate triangles (end of row)
-        vertices[ base_off + (width * 2 * 3) + 0 ] = vertices[ base_off + (width * 2 * 3) + 0 - 3 ];
-        vertices[ base_off + (width * 2 * 3) + 1 ] = vertices[ base_off + (width * 2 * 3) + 1 - 3 ];
-        vertices[ base_off + (width * 2 * 3) + 2 ] = vertices[ base_off + (width * 2 * 3) + 2 - 3 ];
+        if (y < (height - 1) - 1) { // Do not insert the two degenerate points if we finished the last row
 
-        vertices[ base_off + (width * 2 * 3) + 3 ] = normalizeX(0 + 0.5); // Like 5
-        vertices[ base_off + (width * 2 * 3) + 4 ] = normalizeY(y + 1.5);
-        vertices[ base_off + (width * 2 * 3) + 5 ] = 0;
+          // Insert two extra points to form degenerate triangles (end of row)
+          vertices[ base_off + (width * 2 * 3) + 0 ] = vertices[ base_off + (width * 2 * 3) + 0 - 3 ];
+          vertices[ base_off + (width * 2 * 3) + 1 ] = vertices[ base_off + (width * 2 * 3) + 1 - 3 ];
+          vertices[ base_off + (width * 2 * 3) + 2 ] = vertices[ base_off + (width * 2 * 3) + 2 - 3 ];
+
+          vertices[ base_off + (width * 2 * 3) + 3 ] = normalizeX(0 + 0.5); // Like 5
+          vertices[ base_off + (width * 2 * 3) + 4 ] = normalizeY(y + 1.5);
+          vertices[ base_off + (width * 2 * 3) + 5 ] = 0;
+        }
       }
       return vertices;
     }
@@ -342,13 +375,15 @@
       surfaceProgram.uFloorClipRange = gl.getUniformLocation(surfaceProgram, "uFloorClipRange");
       surfaceProgram.uGeocastMVPMatrix = gl.getUniformLocation(surfaceProgram, "uGeocastMVPMatrix");
       surfaceProgram.texGeocastSampler = gl.getUniformLocation(surfaceProgram, "texGeocastSampler[0]");
-      surfaceProgram.boundSlots = gl.getUniformLocation(surfaceProgram, "boundSlots");
+      surfaceProgram.uBoundSlots = gl.getUniformLocation(surfaceProgram, "uBoundSlots");
+      surfaceProgram.uShowWireframe = gl.getUniformLocation(surfaceProgram, "uShowWireframe");
     }
 
     var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
     var theta = 200.0; // Degrees spherical coord
     var phi = 30.0;   // Degrees spherical coord
     var sphere_d = 100.0; // Start spherical distance
+    var wireframeEnabled = false;
 
     var mouseDown = false;
     var mouseDownElementId;
@@ -372,6 +407,9 @@
         } break;
         case 37: { // Left keyboard arrow
           currentMatchGroup = Math.max(0, currentMatchGroup - 1);
+        } break;
+        case 87: { // 'w' key for wireframe
+          wireframeEnabled = !wireframeEnabled;
         } break;
       }
     }
@@ -548,7 +586,8 @@
         }
         gl.uniform1iv(surfaceProgram.texGeocastSampler, textureUnitsToUse);
         gl.uniformMatrix4fv(surfaceProgram.uGeocastMVPMatrix, false, matricesFloatArray);
-        gl.uniform1fv(surfaceProgram.boundSlots, [textureUnitsToUse.length]);
+        gl.uniform1fv(surfaceProgram.uBoundSlots, [textureUnitsToUse.length]);
+        gl.uniform1fv(surfaceProgram.uShowWireframe, [wireframeEnabled == true ? 1.0 : 0.0]);
         
         var inverseMVMatrix = mat4.create();
         var inversePMatrix = mat4.create();
