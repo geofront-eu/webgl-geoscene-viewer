@@ -1,6 +1,7 @@
 <html>
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no">
   <title>Geocarve WebGL Viewer</title>
   <script type="text/javascript" src="utils/js-geoscene-reader/gl-matrix-min.js"></script>
   <script type="text/javascript" src="utils/js-geoscene-reader/geoscene-filereader.js"></script>
@@ -394,9 +395,86 @@
       canvas.onmousedown = handleMouseDown;
       canvas.onmouseup = handleMouseUp;
       canvas.onmousemove = handleMouseMove;
-      canvas.addEventListener('mouseout', onMouseOutOfCanvas, true); // Stop canvas input if mouse gets out of it
+      canvas.addEventListener('mouseout', onMouseOutOfCanvas, true); // Stop canvas input if mouse gets out of it      
       canvas.onwheel = handleMouseWheel;
       document.onkeydown = handleKeyDown;
+      canvas.addEventListener('touchstart', onTouchStart);
+      canvas.addEventListener('touchmove', onTouchMove);
+      canvas.addEventListener('touchend', onTouchEnd);
+    }
+
+    var touchFingers = {};
+    var startZoomDistance = -1;
+
+    function calculateTwoTouchPointsDistance() {
+      var distance = -1;
+      if (Object.keys(touchFingers).length == 2) { // Calculate starting zoom distance
+        var points = [];
+        for (var key in touchFingers) {
+          var point = [touchFingers[key].startX, touchFingers[key].startY];
+          points.push(point);
+        }        
+        distance = Math.sqrt(
+                              Math.pow(points[0][0] - points[1][0], 2) +
+                              Math.pow(points[0][1] - points[1][1], 2)
+                            );
+      }
+      return distance;
+    }
+
+    function onTouchStart(event) {
+      console.log("Touch start");
+      event.preventDefault();
+      for (var i = 0; i < event.changedTouches.length; ++i) {
+        var touch = event.changedTouches[i];
+        touchFingers[touch.identifier] = {
+          startX: parseInt(touch.clientX),
+          startY: parseInt(touch.clientY)
+        }
+      }
+      startZoomDistance = calculateTwoTouchPointsDistance();
+    }
+
+    function onTouchMove(event) {
+      console.log("Touch move");      
+      if (Object.keys(touchFingers).length == 1) {
+        console.log("One finger moving detected");
+        // Rotation
+        var touch = touchFingers[event.changedTouches[0].identifier];
+        if (touch == undefined)
+          return;
+        var newX = parseInt(event.changedTouches[0].clientX);
+        var newY = parseInt(event.changedTouches[0].clientY);
+        theta += (newX - touch.startX) / 10.0;
+        phi += (newY - touch.startY) / 10.0;
+        if (theta >= 360.0) // Take a look at handleMouseMove() for more information
+          theta = theta % 360.0;
+        if (theta < 0.0)
+          theta += 360.0;
+        if (phi > 90.0) phi = 90.0;
+        if (phi < -90.0) phi = -90.0;
+        touch.startX = newX;
+        touch.startY = newY;
+      } else if (Object.keys(touchFingers).length == 2) {
+        console.log("Two fingers moving detected");
+        // Zoom by pinching
+        for (var i = 0; i < event.changedTouches.length; ++i) { // Update known points
+          var touch = touchFingers[event.changedTouches[i].identifier];
+          if (touch != undefined) {
+            touch.startX = parseInt(event.changedTouches[i].clientX);
+            touch.startY = parseInt(event.changedTouches[i].clientY);
+          }
+        }
+        var newZoomDistance = calculateTwoTouchPointsDistance();
+        sphere_d -= (newZoomDistance - startZoomDistance) / 10.0;
+        startZoomDistance = newZoomDistance;
+      }
+    }
+
+    function onTouchEnd(event) {
+      console.log("Touch end");
+      for (var i = 0; i < event.changedTouches.length; ++i)
+        delete touchFingers[event.changedTouches[i].identifier];
     }
 
     function handleKeyDown(event) {
@@ -579,6 +657,9 @@
         executeActionForObjectsInSequence(
           geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
           geoScene.geoCastSequence, bindGeocastInfo, false);
+
+        if (textureUnitsToUse.length == 0)
+          return; // Textures not loaded yet
 
         for (var i = 0; i < textureUnitsToUse.length; ++i) {
           gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
