@@ -102,7 +102,8 @@
       }
       gl_FragColor = final_color;
     } else { // Wireframe anti-aliased shading
-      gl_FragColor = vec4(0.0, 0.0, 0.0, (1.0 - edgeFactor())*0.95);
+      gl_FragColor.rgb = vec3(edgeFactor()*0.95);
+      gl_FragColor.a = 1.0;
     }
   }
 </script>
