@@ -1,8 +1,13 @@
 <html>
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-  <meta name="viewport" content="width=device-width, user-scalable=no">
   <title>Geocarve WebGL Viewer</title>
+  <meta name="description" content="Geocarve Online Viewer">
+  <meta name="keywords" content="geofront,geocarve,geoscene,geocast,online,webgl,viewer">
+  <meta name="viewport" content="width=device-width, user-scalable=no">
+  
+  <link href="css/style.css" rel="stylesheet">
+
   <script type="text/javascript" src="utils/js-geoscene-reader/gl-matrix-min.js"></script>
   <script type="text/javascript" src="utils/js-geoscene-reader/geoscene-filereader.js"></script>
   <script type="text/javascript" src="utils/webgl-utils.js"></script>
@@ -158,8 +163,11 @@
     
     function webGLStart() {
       var canvas = document.getElementById("canvas");
+      var canvasContainer = document.getElementById("canvasContainer");
       try {
         gl = canvas.getContext("experimental-webgl");
+        canvas.width = canvasContainer.offsetWidth;
+        canvas.height = canvasContainer.offsetHeight;
         gl.viewportWidth = canvas.width;
         gl.viewportHeight = canvas.height;
       } catch (e) {}
@@ -183,6 +191,14 @@
       readGeoSceneFile("data/Raw.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
+    }
+
+    function onResizeCanvas() {
+      var canvasContainer = document.getElementById("canvasContainer");
+      canvas.width = canvasContainer.offsetWidth;
+      canvas.height = canvasContainer.offsetHeight;
+      gl.viewportWidth = canvas.width;
+      gl.viewportHeight = canvas.height;
     }
 
     var latticeGridCache = {}; // A cache for different resolution lattices
@@ -423,7 +439,6 @@
     }
 
     function onTouchStart(event) {
-      console.log("Touch start");
       event.preventDefault();
       for (var i = 0; i < event.changedTouches.length; ++i) {
         var touch = event.changedTouches[i];
@@ -438,7 +453,6 @@
     function onTouchMove(event) {
       console.log("Touch move");      
       if (Object.keys(touchFingers).length == 1) {
-        console.log("One finger moving detected");
         // Rotation
         var touch = touchFingers[event.changedTouches[0].identifier];
         if (touch == undefined)
@@ -456,7 +470,6 @@
         touch.startX = newX;
         touch.startY = newY;
       } else if (Object.keys(touchFingers).length == 2) {
-        console.log("Two fingers moving detected");
         // Zoom by pinching
         for (var i = 0; i < event.changedTouches.length; ++i) { // Update known points
           var touch = touchFingers[event.changedTouches[i].identifier];
@@ -472,7 +485,6 @@
     }
 
     function onTouchEnd(event) {
-      console.log("Touch end");
       for (var i = 0; i < event.changedTouches.length; ++i)
         delete touchFingers[event.changedTouches[i].identifier];
     }
@@ -716,7 +728,22 @@
       drawScene();
     }
   </script>
-<body onload="webGLStart();">
-  <canvas id="canvas"  width="1200" height="800"></canvas>
+<body onload="webGLStart();" onresize="onResizeCanvas();">
+  <div class="content-div">
+    <div class="header">
+      <div class="logo">
+        <img src="img/geofront.svg" class="geofront-img"/>
+        <div id="label">Geocarve Viewer</div>
+      </div>
+    </div>
+    <div id="canvasContainer" class="container">    
+        <canvas id="canvas"></canvas>
+    </div>    
+    <div class="footer">
+      <div class="geofront-credits">
+        <a class="hvr-underline-from-left" href="http://www.geofront.eu/"> © geofront e.U. - All rights reserved </a>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
