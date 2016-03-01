@@ -73,7 +73,7 @@
     if(pass_discardFlag.a < 0.999)
       discard;
 
-    if(uShowWireframe == 0.0 || !any(lessThan(pass_barycentricCoords, vec3(0.02)))) { // Texture lookup shading
+    if(uShowWireframe == 0.0 || any(lessThan(pass_barycentricCoords, vec3(0.02)))) { // Texture lookup shading
 
       vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
 
@@ -165,7 +165,7 @@
     
     function webGLStart() {
       var canvas = document.getElementById("canvas");
-      var canvasContainer = document.getElementById("canvasContainer");
+      var canvasContainer = document.getElementById("canvasContainer");      
       try {
         gl = canvas.getContext("experimental-webgl");
         canvas.width = canvasContainer.offsetWidth;
@@ -188,10 +188,20 @@
       var geoSceneObjectReady = function(object) {
         geoScene = object;
         currentSceneFrame = geoScene.sequence[0];
+        var frameCtrl = document.getElementById("numberbox_frame");
+        frameCtrl.setAttribute("min", geoScene.sequence[0]);
+        frameCtrl.setAttribute("max", geoScene.sequence[1]);
+        frameCtrl.setAttribute("value", geoScene.sequence[0]);
+        document.getElementById("rangeFrame").innerHTML = "[" + geoScene.sequence[0] + ";" + geoScene.sequence[1] + "]";
+        var matchgroupCtrl = document.getElementById("numberbox_matchgroup");
+        matchgroupCtrl.setAttribute("min", 0);
+        matchgroupCtrl.setAttribute("max", geoScene.matchGroupSequence.length - 1);
+        matchgroupCtrl.setAttribute("value", 0);
+        document.getElementById("rangeMatchgroup").innerHTML = "[0;" + (geoScene.matchGroupSequence.length - 1) + "]";
         generateSceneLattices();
         loadTextures();
       };      
-      readGeoSceneFile("data/png_calibration.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+      readGeoSceneFile("data/Raw.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
@@ -748,6 +758,27 @@
       requestAnimFrame(paintLoop);
       drawScene();
     }
+
+    // UI related routines
+    function handleWireframeClick(checkbox) {
+      wireframeEnabled = checkbox.checked;
+    }
+
+    function handleMatchgroupChange(inputbox) {
+      var rangeCheckedValue = Math.max(0, Math.min(geoScene.matchGroupSequence.length - 1, inputbox.value));
+      currentMatchGroup = rangeCheckedValue;
+      inputbox.value = rangeCheckedValue;
+      inputbox.setAttribute('value', rangeCheckedValue);
+      console.log("fired handleMatchgroupChange: " + rangeCheckedValue);
+    }
+
+    function handleFrameChange(inputbox) {      
+      var rangeCheckedValue = Math.max(geoScene.sequence[0], Math.min(geoScene.sequence[1], inputbox.value));
+      currentSceneFrame = rangeCheckedValue - geoScene.sequence[0];
+      inputbox.value = rangeCheckedValue;
+      inputbox.setAttribute('value', rangeCheckedValue);
+      console.log("fired handleFrameChange: " + rangeCheckedValue);
+    }
   </script>
 <body onload="webGLStart();" onresize="onResizeCanvas();">
   <div class="content-div">
@@ -757,8 +788,13 @@
         <div id="label">Geocarve Viewer</div>
       </div>
     </div>
-    <div id="canvasContainer" class="container">    
-        <canvas id="canvas"></canvas>
+    <div id="canvasContainer" class="container">
+      <div id="controlsDiv">
+        <label for="x" class="aligncheckbox"><input type="checkbox" id="x" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
+        <p>MatchGroup <span id="rangeMatchgroup">[]</span>&nbsp;&nbsp;<input id="numberbox_matchgroup" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleMatchgroupChange(this);"/></p>
+        <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleFrameChange(this);"/></p>
+      </div>
+      <canvas id="canvas"></canvas>
     </div>    
     <div class="footer">
       <div class="geofront-credits">
