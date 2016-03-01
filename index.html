@@ -514,22 +514,27 @@
       switch (key) {
         case 38: { // Up keyboard arrow -> ++matchgroup
           currentMatchGroup = Math.min(currentMatchGroup + 1, geoScene.matchGroupSequence.length - 1);
+          document.getElementById("numberbox_matchgroup").value = currentMatchGroup;
         } break;
         case 40: { // Down keyboard arrow -> --matchgroup
           currentMatchGroup = Math.max(0, currentMatchGroup - 1);
+          document.getElementById("numberbox_matchgroup").value = currentMatchGroup;
         } break;
         case 39: { // Right keyboard arrow -> ++frame
           var curFrame = currentSceneFrame + geoScene.sequence[0];
           curFrame = Math.min(curFrame + 1, geoScene.sequence[1]);
+          document.getElementById("numberbox_frame").value = curFrame;
           currentSceneFrame = curFrame - geoScene.sequence[0];
         } break;
         case 37: { // Left keyboard arrow -> --frame
           var curFrame = currentSceneFrame + geoScene.sequence[0];
           curFrame = Math.max(geoScene.sequence[0], curFrame - 1);
+          document.getElementById("numberbox_frame").value = curFrame;
           currentSceneFrame = curFrame - geoScene.sequence[0];
         } break;
         case 87: { // 'w' key for wireframe
           wireframeEnabled = !wireframeEnabled;
+          document.getElementById("checkbox_wireframe").checked = wireframeEnabled;
         } break;
       }
     }
@@ -790,7 +795,7 @@
     </div>
     <div id="canvasContainer" class="container">
       <div id="controlsDiv">
-        <label for="x" class="aligncheckbox"><input type="checkbox" id="x" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
+        <label for="wireframe_checkbox" class="aligncheckbox"><input type="checkbox" id="checkbox_wireframe" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
         <p>MatchGroup <span id="rangeMatchgroup">[]</span>&nbsp;&nbsp;<input id="numberbox_matchgroup" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleMatchgroupChange(this);"/></p>
         <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleFrameChange(this);"/></p>
       </div>
