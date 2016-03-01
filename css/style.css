@@ -52,21 +52,6 @@ html, body {
   text-align: center;
 }
 
-.logo {
-  max-width: 100%;
-  overflow-x: hidden;
-}
-
-#label {
-  position: relative;
-  left: 4%;
-  color: #fff;
-  color: #fff;
-  text-shadow: 0px 1px 0px #999, 0px 2px 0px #888, 0px 3px 0px #777, 0px 4px 0px #666, 0px 5px 0px #555, 0px 6px 0px #444, 0px 7px 0px #333, 0px 8px 7px #001135;
-  font: 27px 'Century Gothic';
-  padding-bottom: 5px;
-}
-
 .geofront-img {
   object-fit: contain;
   width: 100%;
@@ -74,35 +59,6 @@ html, body {
   height: 50%;
   max-width: 100%;
   max-height: 100%;
-}
-
-@media screen and (max-height: 768px) {
-  .logo {
-  	text-align: center;
-    position: relative;
-    top: 50%;
-    -ms-transform: translateY(-50%);
-    -webkit-transform: translateY(-50%);
-    transform: translateY(-50%);
-  }
-  #label {
-  	left: 0%;
-  	font-size: auto;
-  }
-  .geofront-img {
-    display: none;
-  }
-}
-
-@media screen and (max-height: 470px) {
-  #label {
-	left: 0%;
-	text-shadow: none;
-	font-size: auto;
-  }
-  .geofront-img {
-    display: none;
-  }
 }
 
 .footer {
@@ -150,7 +106,7 @@ html, body {
   left: -2;
   right: 102%;
   bottom: 0;
-  background: #E9771C;
+  background: #f15f42;
   height: 100%;
   -webkit-transition-property: right;
   transition-property: right;
