@@ -73,7 +73,7 @@
     if(pass_discardFlag.a < 0.999)
       discard;
 
-    if(uShowWireframe == 0.0 || any(lessThan(pass_barycentricCoords, vec3(0.02)))) { // Texture lookup shading
+    if(uShowWireframe == 0.0) { // Texture lookup shading
 
       vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
 
@@ -101,7 +101,7 @@
         }
       }
       gl_FragColor = final_color;
-    } else { // Wireframe anti-aliased shading
+    } else { // Wireframe anti-aliased shading and white fragments
       gl_FragColor.rgb = vec3(edgeFactor()*0.95);
       gl_FragColor.a = 1.0;
     }
