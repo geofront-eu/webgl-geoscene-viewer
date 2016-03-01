@@ -161,6 +161,7 @@
     
     var geoScene = null; // Main GeoScene object
     var currentMatchGroup = 0; // Current matchgroup index
+    var currentSceneFrame = 0; // Current geoscene frame
     
     function webGLStart() {
       var canvas = document.getElementById("canvas");
@@ -186,10 +187,11 @@
 
       var geoSceneObjectReady = function(object) {
         geoScene = object;
+        currentSceneFrame = geoScene.sequence[0];
         generateSceneLattices();
         loadTextures();
       };      
-      readGeoSceneFile("data/Raw.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+      readGeoSceneFile("data/png_calibration.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
@@ -283,21 +285,28 @@
 
     function loadTextures() {
       var loadTextureFromFile = function(geocastSequenceObject) {
-        texturesMap[geocastSequenceObject.name] = gl.createTexture();
-        texturesMap[geocastSequenceObject.name].image = new Image();
-        texturesMap[geocastSequenceObject.name].safeToRender = false;
-        texturesMap[geocastSequenceObject.name].image.onload = function () {
-          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name]);
-          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name].image);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-          gl.bindTexture(gl.TEXTURE_2D, null);
-          texturesMap[geocastSequenceObject.name].safeToRender = true;
-        }
-        texturesMap[geocastSequenceObject.name].image.src = geocastSequenceObject.image;
+        texturesMap[geocastSequenceObject.name] = [];
+        for (var i = 0; i <= geoScene.sequence[1] - geoScene.sequence[0]; ++i) {
+          texturesMap[geocastSequenceObject.name].push(new Object());
+          texturesMap[geocastSequenceObject.name][i] = gl.createTexture();
+          texturesMap[geocastSequenceObject.name][i].image = new Image();
+          texturesMap[geocastSequenceObject.name][i].safeToRender = false;
+          texturesMap[geocastSequenceObject.name][i].image.onload = (function (j) {
+            var index = j;
+            return function() {
+              gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
+              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+              gl.bindTexture(gl.TEXTURE_2D, null);
+              texturesMap[geocastSequenceObject.name][index].safeToRender = true;
+            };
+          })(i);
+          texturesMap[geocastSequenceObject.name][i].image.src = geocastSequenceObject.image[i]; 
+        }        
       };
       for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
         executeActionForObjectsInSequence(
@@ -493,11 +502,21 @@
     function handleKeyDown(event) {
       var key = event.keyCode || event.which;
       switch (key) {
-        case 39: { // Right keyboard arrow
+        case 38: { // Up keyboard arrow -> ++matchgroup
           currentMatchGroup = Math.min(currentMatchGroup + 1, geoScene.matchGroupSequence.length - 1);
         } break;
-        case 37: { // Left keyboard arrow
+        case 40: { // Down keyboard arrow -> --matchgroup
           currentMatchGroup = Math.max(0, currentMatchGroup - 1);
+        } break;
+        case 39: { // Right keyboard arrow -> ++frame
+          var curFrame = currentSceneFrame + geoScene.sequence[0];
+          curFrame = Math.min(curFrame + 1, geoScene.sequence[1]);
+          currentSceneFrame = curFrame - geoScene.sequence[0];
+        } break;
+        case 37: { // Left keyboard arrow -> --frame
+          var curFrame = currentSceneFrame + geoScene.sequence[0];
+          curFrame = Math.max(geoScene.sequence[0], curFrame - 1);
+          currentSceneFrame = curFrame - geoScene.sequence[0];
         } break;
         case 87: { // 'w' key for wireframe
           wireframeEnabled = !wireframeEnabled;
@@ -576,11 +595,12 @@
         if (geoCastSequenceObject == undefined || geoCastSequenceObject == null)
           console.log("Could not find a geocast sequence object with key '" + objName + "'");
         if (ignoreGeocast == false) {
-          if (geoCastSequenceObject.geocast == undefined || geoCastSequenceObject.geocast == null) {
+          if (geoCastSequenceObject.geocast[currentSceneFrame] == undefined || 
+              geoCastSequenceObject.geocast[currentSceneFrame] == null) {
             continue; // Sequence object not loaded yet
           }
-          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast);
-          actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast.ModelviewMatrix, pMatrix);
+          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast[currentSceneFrame]);
+          actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast[currentSceneFrame].ModelviewMatrix, pMatrix);
         } else {
           actionCallback (geoCastSequenceObject);
         }
@@ -642,10 +662,10 @@
       var drawSurface = function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
         gl.useProgram(surfaceProgram);
         
-        if (texturesMap[geocastSequenceObject.name].safeToRender == false)
+        if (texturesMap[geocastSequenceObject.name][currentSceneFrame].safeToRender == false)
           return;
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name]);
+        gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][currentSceneFrame]);
         gl.uniform1i(surfaceProgram.texDepthMapSampler, 0);
 
         var matricesFloatArray = [];
@@ -655,7 +675,7 @@
         var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
           if (availableTexId > 15)
             console.log("Insufficient texture units");
-          if(texturesMap[geocastSequenceObj.name].safeToRender == false)
+          if(texturesMap[geocastSequenceObj.name][currentSceneFrame].safeToRender == false)
             return;
           var mvpMat = mat4.create();
           mat4.multiply(mvpMat, mvpMat, pMat);
@@ -676,7 +696,7 @@
 
         for (var i = 0; i < textureUnitsToUse.length; ++i) {
           gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
-          gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]]);
+          gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][currentSceneFrame]);
         }
         gl.uniform1iv(surfaceProgram.texGeocastSampler, textureUnitsToUse);
         gl.uniformMatrix4fv(surfaceProgram.uGeocastMVPMatrix, false, matricesFloatArray);
@@ -693,8 +713,8 @@
         gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix_Inverse, false, inversePMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uViewMVMatrix, false, modelViewMatrix);
         gl.uniformMatrix4fv(surfaceProgram.uViewProjMatrix, false, perspectiveMatrix);
-        var zRange = (geocastSequenceObject.geocast.ProjRange != undefined) ? 
-                      geocastSequenceObject.geocast.ProjRange : geocastSequenceObject.geocast.ClipRange;
+        var zRange = (geocastSequenceObject.geocast[currentSceneFrame].ProjRange != undefined) ? 
+                      geocastSequenceObject.geocast[currentSceneFrame].ProjRange : geocastSequenceObject.geocast[currentSceneFrame].ClipRange;
         gl.uniform2fv(surfaceProgram.uFloorClipRange, zRange);
 
         var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
