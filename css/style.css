@@ -6,7 +6,7 @@ html, body {
 }
 
 .content-div { /* Container for entire page */
-  background: #5a5a5a;
+  background: rgb(90, 90, 90);
   height: 100%;
   width: 100%;    
 }
@@ -24,7 +24,7 @@ html, body {
 
 #controlsDiv {
   position: absolute;
-  background-color: rgba(100, 100, 100, 0.8);
+  background-color: rgba(113, 113, 113, 0.8);
   border-radius: 0px 0px 15px;
   padding: 10px;
   color: white;
@@ -55,7 +55,7 @@ html, body {
   position: absolute;
   bottom: 0;
   right: 0;
-  background-color: rgba(100, 100, 100, 0.8);
+  background-color: rgba(113, 113, 113, 0.8);
   border-radius: 15px 0px 0px;
   padding: 10px;
   color: white;
