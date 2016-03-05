@@ -161,7 +161,7 @@
     
     var geoScene = null; // Main GeoScene object
     var currentMatchGroup = 0; // Current matchgroup index
-    var currentSceneFrame = 0; // Current geoscene frame
+    var currentSceneFrame = 0; // Current geoscene frame (0 maps to geoScene.sequence[0])
     
     function webGLStart() {
       var canvas = document.getElementById("canvas");
@@ -188,7 +188,7 @@
       var geoSceneObjectReady = function(object) {
         updateLoadingProgress("Geoscene Loaded", 100);
         geoScene = object;
-        currentSceneFrame = geoScene.sequence[0];
+        currentSceneFrame = 0; // 0 maps to geoScene.sequence[0];
         var frameCtrl = document.getElementById("numberbox_frame");
         frameCtrl.setAttribute("min", geoScene.sequence[0]);
         frameCtrl.setAttribute("max", geoScene.sequence[1]);
