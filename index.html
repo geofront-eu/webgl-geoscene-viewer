@@ -186,6 +186,7 @@
       gl.enable(gl.DEPTH_TEST);
 
       var geoSceneObjectReady = function(object) {
+        updateLoadingProgress("Geoscene Loaded", 100);
         geoScene = object;
         currentSceneFrame = geoScene.sequence[0];
         var frameCtrl = document.getElementById("numberbox_frame");
@@ -200,8 +201,10 @@
         document.getElementById("rangeMatchgroup").innerHTML = "[0;" + (geoScene.matchGroupSequence.length - 1) + "]";
         generateSceneLattices();
         loadTextures();
-      };      
-      readGeoSceneFile("data/Raw.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+      };
+
+      updateLoadingProgress("Reading Geoscene", 10);
+      readGeoSceneFile("data/sedan/sedan.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
@@ -217,6 +220,7 @@
     var latticeGridCache = {}; // A cache for different resolution lattices
 
     function generateSceneLattices() {
+      updateLoadingProgress("Generating Grids", 0);
       for (var i = 0; i < geoScene.geoCastZSequence.length; ++i) {
         var sizeKey = geoScene.geoCastZSequence[i].size[0] + 'x' + geoScene.geoCastZSequence[i].size[1];
         if (latticeGridCache.sizeKey == undefined) {
@@ -234,7 +238,9 @@
           latticeGridCache[sizeKey].n_of_vertices = vbo_data.length / 3; // Number of vertices to use
           gl.bindBuffer(gl.ARRAY_BUFFER, null);
         }
-      }      
+        updateLoadingProgress("Generating Grids", 100 * ((i + 1) / geoScene.geoCastZSequence.length));
+      }
+      updateLoadingProgress("Grids Ready", 100);
     }
 
     function generateArbitraryDimensionLattice(width, height) { // Generates a lattice of (width x height) vertices with
@@ -292,9 +298,27 @@
     }
 
     var texturesMap = {};
+    var totalNumberOfTextures = 0;
+    var loadedTextures = 0;
+
+    function updateLoadingProgress(text, value, finalize) {
+      document.getElementById("loadingText").innerHTML = text;
+      document.getElementById("loadingBar").value = value;
+      if (finalize != undefined && finalize == true && value == 100) {
+        document.getElementById("loadingText").innerHTML = "Viewer Ready";
+        setTimeout(hideLoadingProgress, 3000);
+      }
+    }
+
+    function hideLoadingProgress() {
+      document.getElementById("loadingDiv").style.display = 'none';
+    }
 
     function loadTextures() {
+      updateLoadingProgress("Readying Requests", 0);
       var loadTextureFromFile = function(geocastSequenceObject) {
+        if (texturesMap[geocastSequenceObject.name] != undefined)
+          return;
         texturesMap[geocastSequenceObject.name] = [];
         for (var i = 0; i <= geoScene.sequence[1] - geoScene.sequence[0]; ++i) {
           texturesMap[geocastSequenceObject.name].push(new Object());
@@ -313,11 +337,20 @@
               gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
               gl.bindTexture(gl.TEXTURE_2D, null);
               texturesMap[geocastSequenceObject.name][index].safeToRender = true;
+              updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
             };
           })(i);
           texturesMap[geocastSequenceObject.name][i].image.src = geocastSequenceObject.image[i]; 
         }        
       };
+      totalNumberOfTextures = 0;
+      geoScene.geoCastSequence.forEach(function(entry) {
+        totalNumberOfTextures += entry.image.length;
+      });
+      geoScene.geoCastZSequence.forEach(function(entry) {
+        totalNumberOfTextures += entry.image.length;
+      });
+      updateLoadingProgress("Loading Textures", 0);
       for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
         executeActionForObjectsInSequence(
           geoScene.matchGroupSequence[i].matchSurfaceSequence,
@@ -794,8 +827,9 @@
       <div id="controlsDiv">
         <label for="wireframe_checkbox" class="aligncheckbox"><input type="checkbox" id="checkbox_wireframe" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
         <p>MatchGroup <span id="rangeMatchgroup">[]</span>&nbsp;&nbsp;<input id="numberbox_matchgroup" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleMatchgroupChange(this);"/></p>
-        <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleFrameChange(this);"/></p>
+        <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleFrameChange(this);"/></p>        
       </div>
+      <div id="loadingDiv"><label for="loadingBar"><span id="loadingText"></span>&nbsp;&nbsp;<progress id="loadingBar" value="0" max="100"></progress></label></div>
       <canvas id="canvas"></canvas>
     </div>    
     <div class="footer">
