@@ -136,7 +136,7 @@
 
     vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);    
 
-    vec4 depth_camspace;  // purpose: "image" a pixel of depth Z (its view vector) into camera space
+    vec4 depth_camspace;  // Purpose: "image" a pixel of depth Z (its view vector) into camera space
     depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1.);
 
     float model_depth = depth_camspace.z / depth_camspace.w;
@@ -150,6 +150,31 @@
     vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(latticePos.xy,  model_depth, 1);
     pass_aPosition = worldpos;
     gl_Position = uViewProjMatrix * uViewMVMatrix * worldpos;
+  }
+</script>
+<script id="colorpicker-shader-fs" type="x-shader/x-fragment">
+  precision highp float;
+
+  uniform vec4 uColor;
+
+  void main(void) {
+      gl_FragColor = uColor;
+  }
+</script>
+<script id="colorpicker-shader-vs" type="x-shader/x-vertex">
+  precision highp float;
+  attribute vec3 aPosition;
+
+  uniform mat4 uViewMVMatrix;
+  uniform mat4 uViewProjMatrix;
+
+  uniform mat4 uGeoCastMVMatrix;
+  uniform mat4 uGeoCastProjMatrix;
+  uniform mat4 uGeoCastMVMatrix_Inverse;
+  uniform mat4 uGeoCastProjMatrix_Inverse;
+
+  void main(void) {
+    gl_Position = uViewProjMatrix * uViewMVMatrix * (uGeoCastMVMatrix * uGeoCastProjMatrix_Inverse *  vec4(aPosition.xyz, 1.0));
   }
 </script>
 <script type="text/javascript">
@@ -403,6 +428,7 @@
 
     var cameraFrustumLinesProgram;
     var surfaceProgram;
+    var colorPickerProgram;
 
     function setupShaderPrograms() {      
       var vertexShader = getShader(gl, "camera-frustum-lines-shader-vs");
@@ -447,6 +473,26 @@
       surfaceProgram.texGeocastSampler = gl.getUniformLocation(surfaceProgram, "texGeocastSampler[0]");
       surfaceProgram.uBoundSlots = gl.getUniformLocation(surfaceProgram, "uBoundSlots");
       surfaceProgram.uShowWireframe = gl.getUniformLocation(surfaceProgram, "uShowWireframe");
+
+      vertexShader = getShader(gl, "colorpicker-shader-vs");
+      fragmentShader = getShader(gl, "colorpicker-shader-fs");
+      colorPickerProgram = gl.createProgram();
+      gl.attachShader(colorPickerProgram, vertexShader);
+      gl.attachShader(colorPickerProgram, fragmentShader);
+      gl.linkProgram(colorPickerProgram);
+      if (!gl.getProgramParameter(colorPickerProgram, gl.LINK_STATUS))
+          alert("Could not initialize shaders");
+      gl.useProgram(colorPickerProgram);
+      // Bind uniforms and attributes      
+      colorPickerProgram.uViewMVMatrix = gl.getUniformLocation(colorPickerProgram, "uViewMVMatrix");
+      colorPickerProgram.uViewProjMatrix = gl.getUniformLocation(colorPickerProgram, "uViewProjMatrix");
+      colorPickerProgram.uGeoCastMVMatrix = gl.getUniformLocation(colorPickerProgram, "uGeoCastMVMatrix");
+      colorPickerProgram.uGeoCastProjMatrix = gl.getUniformLocation(colorPickerProgram, "uGeoCastProjMatrix");
+      colorPickerProgram.uGeoCastMVMatrix_Inverse = gl.getUniformLocation(colorPickerProgram, "uGeoCastMVMatrix_Inverse");
+      colorPickerProgram.uGeoCastProjMatrix_Inverse = gl.getUniformLocation(colorPickerProgram, "uGeoCastProjMatrix_Inverse");
+      colorPickerProgram.uColor = gl.getUniformLocation(colorPickerProgram, "uColor");
+      colorPickerProgram.aPosition = gl.getAttribLocation(colorPickerProgram, "aPosition");
+      gl.enableVertexAttribArray(colorPickerProgram.aPosition);
     }
 
     var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
@@ -643,8 +689,8 @@
         if (geoCastSequenceObject == undefined || geoCastSequenceObject == null)
           console.log("Could not find a geocast sequence object with key '" + objName + "'");
         if (ignoreGeocast == false) {
-          if (geoCastSequenceObject.geocast[currentSceneFrame] == undefined || 
-              geoCastSequenceObject.geocast[currentSceneFrame] == null) {
+          if (geoCastSequenceObject.geocast[currentSceneFrame].ModelviewMatrix == undefined || 
+              geoCastSequenceObject.geocast[currentSceneFrame].ModelviewMatrix == null) { // Caveat: do NOT check for the object itself (placeholders)
             continue; // Sequence object not loaded yet
           }
           var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast[currentSceneFrame]);
