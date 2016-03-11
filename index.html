@@ -204,7 +204,8 @@
       gl.getExtension('OES_standard_derivatives');
 
       setupGeometries();
-      setupShaderPrograms();      
+      setupShaderPrograms();
+      setupFramebuffers();
       setupInput(canvas);
 
       gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -215,14 +216,14 @@
         geoScene = object;
         currentSceneFrame = 0; // 0 maps to geoScene.sequence[0];
         var frameCtrl = document.getElementById("numberbox_frame");
-        frameCtrl.setAttribute("min", geoScene.sequence[0]);
-        frameCtrl.setAttribute("max", geoScene.sequence[1]);
-        frameCtrl.setAttribute("value", geoScene.sequence[0]);
+        frameCtrl.min = geoScene.sequence[0];
+        frameCtrl.max = geoScene.sequence[1];
+        frameCtrl.value = geoScene.sequence[0];
         document.getElementById("rangeFrame").innerHTML = "[" + geoScene.sequence[0] + ";" + geoScene.sequence[1] + "]";
         var matchgroupCtrl = document.getElementById("numberbox_matchgroup");
-        matchgroupCtrl.setAttribute("min", 0);
-        matchgroupCtrl.setAttribute("max", geoScene.matchGroupSequence.length - 1);
-        matchgroupCtrl.setAttribute("value", 0);
+        matchgroupCtrl.min = 0;
+        matchgroupCtrl.max = geoScene.matchGroupSequence.length - 1;
+        matchgroupCtrl.value = 0;
         document.getElementById("rangeMatchgroup").innerHTML = "[0;" + (geoScene.matchGroupSequence.length - 1) + "]";
         generateSceneLattices();
         loadTextures();
@@ -240,6 +241,44 @@
       canvas.height = canvasContainer.offsetHeight;
       gl.viewportWidth = canvas.width;
       gl.viewportHeight = canvas.height;
+      setupFramebuffers(); // Resize secondary framebuffers
+    }
+
+    function increaseMatchgroupWithBoundsChecking() { // Returns the new matchgroup
+      currentMatchGroup = Math.min(currentMatchGroup + 1, geoScene.matchGroupSequence.length - 1);
+      return currentMatchGroup;
+    }
+    function decreaseMatchgroupWithBoundsChecking() { // Ditto
+      currentMatchGroup = Math.max(0, currentMatchGroup - 1);
+      return currentMatchGroup;
+    }
+    function setMatchgroupWithBoundsChecking(value) { // Ditto
+      var rangeCheckedValue = Math.max(0, Math.min(geoScene.matchGroupSequence.length - 1, value));
+      currentMatchGroup = rangeCheckedValue;
+      return rangeCheckedValue;
+    }
+    function getCurrentMatchgroup() {
+      return currentMatchGroup;
+    }
+    function increaseFrameWithBoundsChecking() { // Returns the new geoscene-range frame
+      var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
+      curGeosceneFrame = Math.min(curGeosceneFrame + 1, geoScene.sequence[1]);
+      currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+      return curGeosceneFrame;
+    }
+    function decreaseFrameWithBoundsChecking() { // Ditto
+      var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
+      curGeosceneFrame = Math.max(geoScene.sequence[0], curGeosceneFrame - 1);
+      currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+      return curGeosceneFrame;
+    }
+    function setFrameWithBoundsChecking(value) { // Ditto, input with geoscene-range frame number
+      var rangeCheckedValue = Math.max(geoScene.sequence[0], Math.min(geoScene.sequence[1], value));
+      currentSceneFrame = rangeCheckedValue - geoScene.sequence[0];
+      return rangeCheckedValue;
+    }
+    function getCurrentFrameInGeosceneRange() { // Returns the geoscene-range frame
+      return currentSceneFrame + geoScene.sequence[0];
     }
 
     var latticeGridCache = {}; // A cache for different resolution lattices
@@ -420,6 +459,30 @@
       ];
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
       camera_frustum_lines_data.indices_length = indices.length;
+      camera_frustum_lines_data.triangle_indices = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.triangle_indices);
+      indices = [
+        // Left
+        0, 1, 4,
+        4, 1, 5,
+        // Right
+        3, 2, 7,
+        7, 2, 6,
+        // near plane
+        6, 2, 0,
+        6, 0, 4,
+        // bottom
+        6, 4, 7,
+        7, 4, 5,
+        // up
+        2, 3, 1,
+        2, 1, 0,
+        // far plane
+        5, 1, 3,
+        5, 3, 7
+      ];
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+      camera_frustum_lines_data.triangle_indices_length = indices.length;
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
@@ -495,6 +558,29 @@
       gl.enableVertexAttribArray(colorPickerProgram.aPosition);
     }
 
+    var colorPickerFramebuffer;
+    var colorPickerRenderTexture;
+
+    function setupFramebuffers() {
+      // Init secondary framebuffer for color picking
+      colorPickerFramebuffer = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, colorPickerFramebuffer);
+      colorPickerFramebuffer.width = gl.viewportWidth;
+      colorPickerFramebuffer.height = gl.viewportHeight;
+      // This is the only texture that is set up here because related to the framebuffer
+      colorPickerRenderTexture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, colorPickerRenderTexture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);        
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, colorPickerFramebuffer.width, colorPickerFramebuffer.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      // Attach the texture to the framebuffer
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorPickerRenderTexture, 0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
     var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
     var theta = 200.0; // Degrees spherical coord
     var phi = 30.0;   // Degrees spherical coord
@@ -503,6 +589,8 @@
 
     var mouseDown = false;
     var mouseDownElementId;
+    var mouseDownAction = null; // Either "RotateScene" or "TimelineDrag"
+    var dragDeltas = 0; // Accumulates timeline drag deltas from the mouse (allows a smoother scroll)
     var lastMouseX = null;
     var lastMouseY = null;
 
@@ -542,8 +630,8 @@
       for (var i = 0; i < event.changedTouches.length; ++i) {
         var touch = event.changedTouches[i];
         touchFingers[touch.identifier] = {
-          startX: parseInt(touch.clientX),
-          startY: parseInt(touch.clientY)
+          startX: parseInt(touch.offsetX),
+          startY: parseInt(touch.offsetY)
         }
       }
       startZoomDistance = calculateTwoTouchPointsDistance();
@@ -556,8 +644,8 @@
         var touch = touchFingers[event.changedTouches[0].identifier];
         if (touch == undefined)
           return;
-        var newX = parseInt(event.changedTouches[0].clientX);
-        var newY = parseInt(event.changedTouches[0].clientY);
+        var newX = parseInt(event.changedTouches[0].offsetX);
+        var newY = parseInt(event.changedTouches[0].offsetY);
         theta += (newX - touch.startX) / 10.0;
         phi += (newY - touch.startY) / 10.0;
         if (theta >= 360.0) // Take a look at handleMouseMove() for more information
@@ -573,8 +661,8 @@
         for (var i = 0; i < event.changedTouches.length; ++i) { // Update known points
           var touch = touchFingers[event.changedTouches[i].identifier];
           if (touch != undefined) {
-            touch.startX = parseInt(event.changedTouches[i].clientX);
-            touch.startY = parseInt(event.changedTouches[i].clientY);
+            touch.startX = parseInt(event.changedTouches[i].offsetX);
+            touch.startY = parseInt(event.changedTouches[i].offsetY);
           }
         }
         var newZoomDistance = calculateTwoTouchPointsDistance();
@@ -592,24 +680,16 @@
       var key = event.keyCode || event.which;
       switch (key) {
         case 38: { // Up keyboard arrow -> ++matchgroup
-          currentMatchGroup = Math.min(currentMatchGroup + 1, geoScene.matchGroupSequence.length - 1);
-          document.getElementById("numberbox_matchgroup").value = currentMatchGroup;
+          document.getElementById("numberbox_matchgroup").value = increaseMatchgroupWithBoundsChecking();
         } break;
         case 40: { // Down keyboard arrow -> --matchgroup
-          currentMatchGroup = Math.max(0, currentMatchGroup - 1);
-          document.getElementById("numberbox_matchgroup").value = currentMatchGroup;
+          document.getElementById("numberbox_matchgroup").value = decreaseMatchgroupWithBoundsChecking();
         } break;
         case 39: { // Right keyboard arrow -> ++frame
-          var curFrame = currentSceneFrame + geoScene.sequence[0];
-          curFrame = Math.min(curFrame + 1, geoScene.sequence[1]);
-          document.getElementById("numberbox_frame").value = curFrame;
-          currentSceneFrame = curFrame - geoScene.sequence[0];
+          document.getElementById("numberbox_frame").value = increaseFrameWithBoundsChecking();
         } break;
         case 37: { // Left keyboard arrow -> --frame
-          var curFrame = currentSceneFrame + geoScene.sequence[0];
-          curFrame = Math.max(geoScene.sequence[0], curFrame - 1);
-          document.getElementById("numberbox_frame").value = curFrame;
-          currentSceneFrame = curFrame - geoScene.sequence[0];
+          document.getElementById("numberbox_frame").value = decreaseFrameWithBoundsChecking();
         } break;
         case 87: { // 'w' key for wireframe
           wireframeEnabled = !wireframeEnabled;
@@ -629,8 +709,14 @@
       mouseDown = true;
       // Get element id (cross-browser friendly) where mouse was pressed
       mouseDownElementId = event.target ? event.target.id : event.srcElement.id;
-      lastMouseX = event.clientX;
-      lastMouseY = event.clientY;
+      lastMouseX = event.offsetX;
+      lastMouseY = event.offsetY;
+
+      var timelineClick = executeColorPicking(lastMouseX, lastMouseY);
+      if (timelineClick)
+        mouseDownAction = "TimelineDrag";
+      else
+        mouseDownAction = "RotateScene";
     }
 
     function handleMouseUp(event) {
@@ -643,24 +729,46 @@
       if(!mouseDown)
         return;
 
-      var newX = event.clientX;
-      var newY = event.clientY;
+      var newX = event.offsetX;
+      var newY = event.offsetY;
       var deltaX = newX - lastMouseX;
       var deltaY = newY - lastMouseY;
 
       if (mouseDownElementId == "canvas") { // Canvas handling
-        var d_theta = deltaX / 10.0;
-        var d_phi   = deltaY / 10.0;
 
-        theta += d_theta;
-        if (theta >= 360.0) // Constrain theta in the [0;360] range
-          theta = theta % 360.0;
-        if (theta < 0.0)
-          theta += 360.0; 
-       
-        phi += d_phi;
-        if (phi > 90.0) phi = 90.0;   // Constrain phi in the [-90;90] range
-        if (phi < -90.0) phi = -90.0; // to avoid up vector problems
+        if (mouseDownAction == "RotateScene") { // Scene rotation handling
+
+          var d_theta = deltaX / 10.0;
+          var d_phi   = deltaY / 10.0;
+
+          theta += d_theta;
+          if (theta >= 360.0) // Constrain theta in the [0;360] range
+            theta = theta % 360.0;
+          if (theta < 0.0)
+            theta += 360.0; 
+         
+          phi += d_phi;
+          if (phi > 90.0) phi = 90.0;   // Constrain phi in the [-90;90] range
+          if (phi < -90.0) phi = -90.0; // to avoid up vector problems
+
+        } else if (mouseDownAction == "TimelineDrag") { // Timeline dragging handling
+
+          if(deltaX > 0) // Only use deltaX here
+            ++dragDeltas;
+          else if(deltaX < 0)
+            --dragDeltas;
+
+          if (dragDeltas > 5) {
+            increaseFrameWithBoundsChecking();
+            updateFrameEditBox(getCurrentFrameInGeosceneRange());
+            dragDeltas = 0;
+          } else if (dragDeltas < -5) {
+            decreaseFrameWithBoundsChecking();
+            updateFrameEditBox(getCurrentFrameInGeosceneRange());
+            dragDeltas = 0;
+          }
+
+        }
       }
 
       lastMouseX = newX;
@@ -673,6 +781,67 @@
       //var delta = Math.max(-1, Math.min(1, event.wheelDelta));
  
       sphere_d += delta * -2.0;
+    }
+
+    function executeColorPicking(mouseX, mouseY) {
+
+      updateSceneMatrices();
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, colorPickerFramebuffer);      
+      gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      gl.useProgram(colorPickerProgram);
+      gl.uniformMatrix4fv(colorPickerProgram.uViewMVMatrix, false /* WebGL supports column-major only */, modelViewMatrix);
+      gl.uniformMatrix4fv(colorPickerProgram.uViewProjMatrix, false /* WebGL supports column-major only */, perspectiveMatrix);
+
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.triangle_indices);
+      gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
+      gl.vertexAttribPointer(cameraFrustumLinesProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
+
+      var baseColor = [1.0, 0.0, 0.0, 1.0];
+      var colorIndex = 0;
+      var camSequenceLength = geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence.length;
+
+      var drawColorFrustum = function(geocastSequenceObject, mvMatrix, pMatrix) {
+         gl.uniformMatrix4fv(colorPickerProgram.uGeoCastMVMatrix, false /* WebGL supports column-major only */, 
+        mvMatrix);
+        gl.uniformMatrix4fv(colorPickerProgram.uGeoCastProjMatrix, false /* WebGL supports column-major only */, 
+          pMatrix);
+        var inverseMVMatrix = mat4.create();
+        var inversePMatrix = mat4.create();
+        mat4.invert(inverseMVMatrix, mvMatrix);
+        mat4.invert(inversePMatrix, pMatrix);
+        gl.uniformMatrix4fv(colorPickerProgram.uGeoCastMVMatrix_Inverse, false /* WebGL supports column-major only */, 
+          inverseMVMatrix);      
+        gl.uniformMatrix4fv(colorPickerProgram.uGeoCastProjMatrix_Inverse, false /* WebGL supports column-major only */, 
+          inversePMatrix);
+
+        gl.uniform4fv(colorPickerProgram.uColor, baseColor);
+
+        gl.drawElements(gl.TRIANGLES, camera_frustum_lines_data.triangle_indices_length, gl.UNSIGNED_SHORT, 0);
+      };
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence,
+        geoScene.geoCastSequence, drawColorFrustum, false);
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence,
+        geoScene.geoCastZSequence, drawColorFrustum, false);      
+
+      // Detect the sequence object associated to where the mouse clicked
+      var pixel_data = new Uint8Array(4);
+      // Remember that coordinates are upside down for textures
+      gl.readPixels(mouseX, gl.viewportHeight - mouseY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel_data);
+
+      // Restore original framebuffer
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+      if (pixel_data[0] == 0)
+        return false;
+      else
+        return true; // Timeline
     }
 
     function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, actionCallback, ignoreGeocast) {
@@ -751,6 +920,8 @@
       mat4.perspective(perspectiveMatrix, degToRad(45), gl.viewportWidth / gl.viewportHeight, 0.1, 5000.0);
     }
 
+    var maximumCamTexturesEverBound = 0;
+
     function drawSurfaces() {
 
       var drawSurface = function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
@@ -766,11 +937,14 @@
         var availableTexId = 1;
         var textureUnitsToUse = [];
         var textureKeys = [];
+        var detectedUnsafeToRenderTextures = false;
         var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
           if (availableTexId > 15)
             console.log("Insufficient texture units");
-          if(texturesMap[geocastSequenceObj.name][currentSceneFrame].safeToRender == false)
+          if(texturesMap[geocastSequenceObj.name][currentSceneFrame].safeToRender == false) {
+            detectedUnsafeToRenderTextures = true;
             return;
+          }
           var mvpMat = mat4.create();
           mat4.multiply(mvpMat, mvpMat, pMat);
           var mvInverseMat = mat4.create(); // (Marco): Remember that Geocarve uses inverted MVs
@@ -785,17 +959,23 @@
           geoScene.matchGroupSequence[currentMatchGroup].matchCamSequence, 
           geoScene.geoCastSequence, bindGeocastInfo, false);
 
-        if (textureUnitsToUse.length == 0)
+        if (textureUnitsToUse.length == 0 || detectedUnsafeToRenderTextures == true)
           return; // Textures not loaded yet
 
         for (var i = 0; i < textureUnitsToUse.length; ++i) {
           gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
           gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][currentSceneFrame]);
         }
-        gl.uniform1iv(surfaceProgram.texGeocastSampler, textureUnitsToUse);
+        var shaderTextureUnitsArray = textureUnitsToUse;
+        if (shaderTextureUnitsArray.length < maximumCamTexturesEverBound) { // Workaround for chrome unbound texunit warnings
+          Array.prototype.push.apply(shaderTextureUnitsArray, new Uint8Array(maximumCamTexturesEverBound - shaderTextureUnitsArray.length));
+        } else if (shaderTextureUnitsArray.length > maximumCamTexturesEverBound) {
+          maximumCamTexturesEverBound = shaderTextureUnitsArray.length;
+        }
+        gl.uniform1iv(surfaceProgram.texGeocastSampler, shaderTextureUnitsArray);
         gl.uniformMatrix4fv(surfaceProgram.uGeocastMVPMatrix, false, matricesFloatArray);
-        gl.uniform1fv(surfaceProgram.uBoundSlots, [textureUnitsToUse.length]);
-        gl.uniform1fv(surfaceProgram.uShowWireframe, [wireframeEnabled == true ? 1.0 : 0.0]);
+        gl.uniform1f(surfaceProgram.uBoundSlots, textureUnitsToUse.length);
+        gl.uniform1f(surfaceProgram.uShowWireframe, wireframeEnabled == true ? 1.0 : 0.0);
         
         var inverseMVMatrix = mat4.create();
         var inversePMatrix = mat4.create();
@@ -820,6 +1000,13 @@
         
         gl.bindTexture(gl.TEXTURE_2D, null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        for (var i = 0; i < textureUnitsToUse.length; ++i) {
+          gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+        }
+        gl.useProgram(null);
       };
       executeActionForObjectsInSequence(
         geoScene.matchGroupSequence[currentMatchGroup].matchSurfaceSequence, 
@@ -849,19 +1036,21 @@
     }
 
     function handleMatchgroupChange(inputbox) {
-      var rangeCheckedValue = Math.max(0, Math.min(geoScene.matchGroupSequence.length - 1, inputbox.value));
-      currentMatchGroup = rangeCheckedValue;
+      var rangeCheckedValue = setMatchgroupWithBoundsChecking(parseInt(inputbox.value));
       inputbox.value = rangeCheckedValue;
-      inputbox.setAttribute('value', rangeCheckedValue);
-      console.log("fired handleMatchgroupChange: " + rangeCheckedValue);
+    }
+
+    function updateMatchgroupEditBox(value) {
+      document.getElementById("numberbox_matchgroup").value = value;
     }
 
     function handleFrameChange(inputbox) {      
-      var rangeCheckedValue = Math.max(geoScene.sequence[0], Math.min(geoScene.sequence[1], inputbox.value));
-      currentSceneFrame = rangeCheckedValue - geoScene.sequence[0];
+      var rangeCheckedValue = setFrameWithBoundsChecking(parseInt(inputbox.value));
       inputbox.value = rangeCheckedValue;
-      inputbox.setAttribute('value', rangeCheckedValue);
-      console.log("fired handleFrameChange: " + rangeCheckedValue);
+    }
+
+    function updateFrameEditBox(value) {
+      document.getElementById("numberbox_frame").value = value;
     }
   </script>
 <body onload="webGLStart();" onresize="onResizeCanvas();">
@@ -872,8 +1061,8 @@
     <div id="canvasContainer" class="container">
       <div id="controlsDiv">
         <label for="wireframe_checkbox" class="aligncheckbox"><input type="checkbox" id="checkbox_wireframe" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
-        <p>MatchGroup <span id="rangeMatchgroup">[]</span>&nbsp;&nbsp;<input id="numberbox_matchgroup" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleMatchgroupChange(this);"/></p>
-        <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="1" min="1" max="999" onchange="handleFrameChange(this);"/></p>        
+        <p>MatchGroup <span id="rangeMatchgroup">[]</span>&nbsp;&nbsp;<input id="numberbox_matchgroup" class="numberbox" type="number" value="0" min="0" max="999" onchange="handleMatchgroupChange(this);"/></p>
+        <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="0" min="0" max="999" onchange="handleFrameChange(this);"/></p>        
       </div>
       <div id="loadingDiv"><label for="loadingBar"><span id="loadingText"></span>&nbsp;&nbsp;<progress id="loadingBar" value="0" max="100"></progress></label></div>
       <canvas id="canvas"></canvas>
