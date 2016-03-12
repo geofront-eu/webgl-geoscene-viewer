@@ -238,7 +238,7 @@
       };
 
       updateLoadingProgress("Reading Geoscene", 10);
-      readGeoSceneFile("data/sedan/sedan.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+      readGeoSceneFile("data/simplescene/scene.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
@@ -864,12 +864,15 @@
         if (geoCastSequenceObject == undefined || geoCastSequenceObject == null)
           console.log("Could not find a geocast sequence object with key '" + objName + "'");
         if (ignoreGeocast == false) {
-          if (geoCastSequenceObject.geocast[currentSceneFrame].ModelviewMatrix == undefined || 
-              geoCastSequenceObject.geocast[currentSceneFrame].ModelviewMatrix == null) { // Caveat: do NOT check for the object itself (placeholders)
+          var index = currentSceneFrame;
+          if (geoCastSequenceObject.geocast.length == 1)
+            index = 0; // Deals with only one geocast case
+          if (geoCastSequenceObject.geocast[index].ModelviewMatrix == undefined || 
+              geoCastSequenceObject.geocast[index].ModelviewMatrix == null) { // Caveat: do NOT check for the object itself (placeholders)
             continue; // Sequence object not loaded yet
           }
-          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast[currentSceneFrame]);
-          actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast[currentSceneFrame].ModelviewMatrix, pMatrix);
+          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast[index]);
+          actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast[index].ModelviewMatrix, pMatrix);
         } else {
           actionCallback (geoCastSequenceObject);
         }
