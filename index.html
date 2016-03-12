@@ -376,7 +376,7 @@
 
     function hideLoadingProgress() {
       document.getElementById("loadingDiv").style.display = 'none';
-    }
+    }    
 
     function loadTextures() {
       updateLoadingProgress("Readying Requests", 0);
@@ -407,12 +407,25 @@
           texturesMap[geocastSequenceObject.name][i].image.src = geocastSequenceObject.image[i]; 
         }        
       };
+
+      var isSequenceObjectUsed = {}; // Allows fast usage checking for a sequence object
+      for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
+        geoScene.matchGroupSequence[i].matchSurfaceSequence.forEach(function(entry) {
+          isSequenceObjectUsed[entry] = true;
+        });
+        geoScene.matchGroupSequence[i].matchCamSequence.forEach(function(entry) {
+          isSequenceObjectUsed[entry] = true;
+        });
+      }
+
       totalNumberOfTextures = 0;
       geoScene.geoCastSequence.forEach(function(entry) {
-        totalNumberOfTextures += entry.image.length;
+        if (isSequenceObjectUsed[entry.name] == true)
+          totalNumberOfTextures += entry.image.length;
       });
       geoScene.geoCastZSequence.forEach(function(entry) {
-        totalNumberOfTextures += entry.image.length;
+        if (isSequenceObjectUsed[entry.name] == true)
+          totalNumberOfTextures += entry.image.length;
       });
       updateLoadingProgress("Loading Textures", 0);
       for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
