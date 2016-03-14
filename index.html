@@ -137,7 +137,6 @@
     vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);    
 
     vec4 depth_camspace;  // Purpose: "image" a pixel of depth Z (its view vector) into camera space
-    depth.x 
     depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1.);
 
     float model_depth = depth_camspace.z / depth_camspace.w;
