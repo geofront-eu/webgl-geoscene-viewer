@@ -134,7 +134,7 @@
                                   aPosition.z == 10.0 ? 1.0 : 0.0,
                                   aPosition.z == 1.0 ? 1.0 : 0.0);
 
-    vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);    
+    vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);
 
     vec4 depth_camspace;  // Purpose: "image" a pixel of depth Z (its view vector) into camera space
     depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1.);
@@ -179,6 +179,7 @@
 </script>
 <script type="text/javascript">
     var gl; // gl instance
+    var canvas;
 
     // Global scene matrices
     var perspectiveMatrix = mat4.create();
@@ -189,7 +190,7 @@
     var currentSceneFrame = 0; // Current geoscene frame (0 maps to geoScene.sequence[0])
     
     function webGLStart() {
-      var canvas = document.getElementById("canvas");
+      canvas = document.getElementById("canvas");
       var canvasContainer = document.getElementById("canvasContainer");      
       try {
         gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
@@ -635,46 +636,99 @@
       return distance;
     }
 
+    function getOffsetXY(e) { // Workaround for unsupported offsetX/offsetY (not yet standardized)
+      var getCumulativeOffset = function(child) {
+        var x = 0, y = 0;
+        while (child && !isNaN(child.offsetLeft) && !isNaN(child.offsetTop)) {
+          x += child.offsetLeft - child.scrollLeft;
+          y += child.offsetTop - child.scrollTop;
+          child = child.offsetParent;
+        }
+        return { top: y, left: x };
+      };      
+      if(e.offsetX == undefined) { // Slower but more compatible
+        var coffs = getCumulativeOffset(canvas);
+        return { top: e.pageY - coffs.top, left: e.pageX - coffs.left };
+      }
+      else
+        return { top: e.offsetY, left: e.offsetX };
+    }
+
     function onTouchStart(event) {
       event.preventDefault();
       for (var i = 0; i < event.changedTouches.length; ++i) {
         var touch = event.changedTouches[i];
+        var offXY = getOffsetXY(touch);
         touchFingers[touch.identifier] = {
-          startX: parseInt(touch.offsetX),
-          startY: parseInt(touch.offsetY)
-        }
+          startX: parseInt(offXY.left),
+          startY: parseInt(offXY.top)
+        };
+        var timelineClick = executeColorPicking(offXY.left, offXY.top);
+        if (timelineClick)
+          mouseDownAction = "TimelineDrag";
+        else
+          mouseDownAction = "RotateScene";
       }
       startZoomDistance = calculateTwoTouchPointsDistance();
     }
 
     function onTouchMove(event) {
-      console.log("Touch move");      
       if (Object.keys(touchFingers).length == 1) {
-        // Rotation
+
         var touch = touchFingers[event.changedTouches[0].identifier];
         if (touch == undefined)
           return;
-        var newX = parseInt(event.changedTouches[0].offsetX);
-        var newY = parseInt(event.changedTouches[0].offsetY);
-        theta += (newX - touch.startX) / 10.0;
-        phi += (newY - touch.startY) / 10.0;
-        if (theta >= 360.0) // Take a look at handleMouseMove() for more information
-          theta = theta % 360.0;
-        if (theta < 0.0)
-          theta += 360.0;
-        if (phi > 90.0) phi = 90.0;
-        if (phi < -90.0) phi = -90.0;
+
+        var offXY = getOffsetXY(event.changedTouches[0]);
+        var newX = parseInt(offXY.left);
+        var newY = parseInt(offXY.top);
+
+        if (mouseDownAction == "RotateScene") { // Rotation
+
+          theta += (newX - touch.startX) / 10.0;
+          phi += (newY - touch.startY) / 10.0;
+
+          if (theta >= 360.0) // Take a look at handleMouseMove() for more information
+            theta = theta % 360.0;
+          if (theta < 0.0)
+            theta += 360.0;
+          if (phi > 90.0) phi = 90.0;
+          if (phi < -90.0) phi = -90.0;
+
+        } else if (mouseDownAction == "TimelineDrag") { // Timeline dragging handling
+
+          var deltaX = newX - touch.startX;
+          if(deltaX > 0) // Only use deltaX here
+            ++dragDeltas;
+          else if(deltaX < 0)
+            --dragDeltas;
+
+          if (dragDeltas > 5) {
+            increaseFrameWithBoundsChecking();
+            updateFrameEditBox(getCurrentFrameInGeosceneRange());
+            dragDeltas = 0;
+          } else if (dragDeltas < -5) {
+            decreaseFrameWithBoundsChecking();
+            updateFrameEditBox(getCurrentFrameInGeosceneRange());
+            dragDeltas = 0;
+          }
+
+        }
+
         touch.startX = newX;
         touch.startY = newY;
-      } else if (Object.keys(touchFingers).length == 2) {
-        // Zoom by pinching
+
+      } else if (Object.keys(touchFingers).length == 2) { // Zoom by pinching
+
         for (var i = 0; i < event.changedTouches.length; ++i) { // Update known points
           var touch = touchFingers[event.changedTouches[i].identifier];
           if (touch != undefined) {
-            touch.startX = parseInt(event.changedTouches[i].offsetX);
-            touch.startY = parseInt(event.changedTouches[i].offsetY);
+            var offXY = getOffsetXY(event.changedTouches[i]);
+            touch.startX = parseInt(offXY.left);
+            touch.startY = parseInt(offXY.top);
           }
         }
+
         var newZoomDistance = calculateTwoTouchPointsDistance();
         sphere_d -= (newZoomDistance - startZoomDistance) / 10.0;
         startZoomDistance = newZoomDistance;
@@ -713,8 +767,10 @@
       mouseDown = true;
       // Get element id (cross-browser friendly) where mouse was pressed
       mouseDownElementId = event.target ? event.target.id : event.srcElement.id;
-      lastMouseX = event.offsetX;
-      lastMouseY = event.offsetY;
+
+      var offXY = getOffsetXY(event);
+      lastMouseX = offXY.left;
+      lastMouseY = offXY.top;
 
       var timelineClick = executeColorPicking(lastMouseX, lastMouseY);
       if (timelineClick)
@@ -733,8 +789,9 @@
       if(!mouseDown)
         return;
 
-      var newX = event.offsetX;
-      var newY = event.offsetY;
+      var offXY = getOffsetXY(event);
+      var newX = offXY.left;
+      var newY = offXY.top;
       var deltaX = newX - lastMouseX;
       var deltaY = newY - lastMouseY;
 
