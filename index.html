@@ -239,7 +239,7 @@
       };
 
       updateLoadingProgress("Reading Geoscene", 10);
-      readGeoSceneFile("data/sedan/sedan.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+      readGeoSceneFile("data/streetscene/scene.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
       
       paintLoop();
     }
@@ -380,7 +380,10 @@
         if (texturesMap[geocastSequenceObject.name] != undefined)
           return;
         texturesMap[geocastSequenceObject.name] = [];
-        for (var i = 0; i <= geoScene.sequence[1] - geoScene.sequence[0]; ++i) {
+        var numberOfTextures = geoScene.sequence[1] - geoScene.sequence[0] + 1; // Both bounds inclusive
+        if (geocastSequenceObject.image.length == 1)
+          numberOfTextures = 1; // Deals with the 1-texture only case
+        for (var i = 0; i < numberOfTextures; ++i) {
           texturesMap[geocastSequenceObject.name].push(new Object());
           texturesMap[geocastSequenceObject.name][i] = gl.createTexture();
           texturesMap[geocastSequenceObject.name][i].image = new Image();
@@ -597,6 +600,7 @@
     var phi = 30.0;   // Degrees spherical coord
     var sphere_d = 100.0; // Start spherical distance
     var wireframeEnabled = false;
+    var noTimelineOnFrustums = false;
 
     var mouseDown = false;
     var mouseDownElementId;
@@ -663,11 +667,12 @@
           startX: parseInt(offXY.left),
           startY: parseInt(offXY.top)
         };
-        var timelineClick = executeColorPicking(offXY.left, offXY.top);
-        if (timelineClick)
-          mouseDownAction = "TimelineDrag";
-        else
-          mouseDownAction = "RotateScene";
+        mouseDownAction = "RotateScene";
+        if (noTimelineOnFrustums == false) {
+          var timelineClick = executeColorPicking(offXY.left, offXY.top);
+          if (timelineClick)
+            mouseDownAction = "TimelineDrag";
+        }
       }
       startZoomDistance = calculateTwoTouchPointsDistance();
     }
@@ -772,11 +777,12 @@
       lastMouseX = offXY.left;
       lastMouseY = offXY.top;
 
-      var timelineClick = executeColorPicking(lastMouseX, lastMouseY);
-      if (timelineClick)
-        mouseDownAction = "TimelineDrag";
-      else
-        mouseDownAction = "RotateScene";
+      mouseDownAction = "RotateScene";
+      if (noTimelineOnFrustums == false) {
+        var timelineClick = executeColorPicking(lastMouseX, lastMouseY);
+        if (timelineClick)
+          mouseDownAction = "TimelineDrag";
+      }
     }
 
     function handleMouseUp(event) {
@@ -997,15 +1003,19 @@
         var matchGroupId = id;
         return function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
           gl.useProgram(surfaceProgram);
+
+          var textureFrameIndex = currentSceneFrame;
+          if (texturesMap[geocastSequenceObject.name].length == 1)
+            textureFrameIndex = 0;
           
-          if (texturesMap[geocastSequenceObject.name][currentSceneFrame].safeToRender == false)
+          if (texturesMap[geocastSequenceObject.name][textureFrameIndex].safeToRender == false)
             return;
           var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
           if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
             return; // Lattice hasn't been created yet / object not ready
 
           gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][currentSceneFrame]);
+          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][textureFrameIndex]);
           gl.uniform1i(surfaceProgram.texDepthMapSampler, 0);
 
           var matricesFloatArray = [];
@@ -1016,7 +1026,7 @@
           var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
             if (availableTexId > 15)
               console.log("Insufficient texture units");
-            if(texturesMap[geocastSequenceObj.name][currentSceneFrame].safeToRender == false) {
+            if(texturesMap[geocastSequenceObj.name][textureFrameIndex].safeToRender == false) {
               detectedUnsafeToRenderTextures = true;
               return;
             }
@@ -1039,7 +1049,7 @@
 
           for (var i = 0; i < textureUnitsToUse.length; ++i) {
             gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
-            gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][currentSceneFrame]);
+            gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][textureFrameIndex]);
           }
           var shaderTextureUnitsArray = textureUnitsToUse;
           if (shaderTextureUnitsArray.length < maximumCamTexturesEverBound) { // Workaround for chrome unbound texunit warnings
@@ -1062,8 +1072,11 @@
           gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix_Inverse, false, inversePMatrix);
           gl.uniformMatrix4fv(surfaceProgram.uViewMVMatrix, false, modelViewMatrix);
           gl.uniformMatrix4fv(surfaceProgram.uViewProjMatrix, false, perspectiveMatrix);
-          var zRange = (geocastSequenceObject.geocast[currentSceneFrame].ProjRange != undefined) ? 
-                        geocastSequenceObject.geocast[currentSceneFrame].ProjRange : geocastSequenceObject.geocast[currentSceneFrame].ClipRange;
+          var geocastFrameIndex = currentSceneFrame;
+          if (geocastSequenceObject.geocast.length == 1)
+            geocastFrameIndex = 0;
+          var zRange = (geocastSequenceObject.geocast[geocastFrameIndex].ProjRange != undefined) ? 
+                        geocastSequenceObject.geocast[geocastFrameIndex].ProjRange : geocastSequenceObject.geocast[geocastFrameIndex].ClipRange;
           gl.uniform2fv(surfaceProgram.uFloorClipRange, zRange);
 
           gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[resKey]);
@@ -1122,6 +1135,10 @@
       wireframeEnabled = checkbox.checked;
     }
 
+    function deactivateTimelineClick(checkbox) {
+      noTimelineOnFrustums = checkbox.checked;
+    }
+
     function handleMatchgroupClick(checkbox, id) {
       if (checkbox.checked == true)
         activateMatchgroup(id, true);
@@ -1146,6 +1163,7 @@
     <div id="canvasContainer" class="container">
       <div id="controlsDiv">
         <label for="wireframe_checkbox" class="aligncheckbox"><input type="checkbox" id="checkbox_wireframe" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
+        <label for="deactivatetimeline_checkbox" class="aligncheckbox"><input type="checkbox" id="deactivatetimeline_checkbox" class="aligncheckbox" onclick="deactivateTimelineClick(this);"/><span>&nbsp;No Frustum Scroll</span></label><br/>
         <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="0" min="0" max="999" onchange="handleFrameChange(this);"/></p>
         <p>Active MatchGroups<br/><div id="matchgroups_div"></div></p>        
       </div>
