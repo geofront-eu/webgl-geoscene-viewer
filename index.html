@@ -1004,18 +1004,18 @@
         return function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
           gl.useProgram(surfaceProgram);
 
-          var textureFrameIndex = currentSceneFrame;
+          var depthTextureFrameIndex = currentSceneFrame;
           if (texturesMap[geocastSequenceObject.name].length == 1)
-            textureFrameIndex = 0;
+            depthTextureFrameIndex = 0;
           
-          if (texturesMap[geocastSequenceObject.name][textureFrameIndex].safeToRender == false)
+          if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)
             return;
           var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
           if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
             return; // Lattice hasn't been created yet / object not ready
 
           gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][textureFrameIndex]);
+          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][depthTextureFrameIndex]);
           gl.uniform1i(surfaceProgram.texDepthMapSampler, 0);
 
           var matricesFloatArray = [];
@@ -1026,7 +1026,10 @@
           var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
             if (availableTexId > 15)
               console.log("Insufficient texture units");
-            if(texturesMap[geocastSequenceObj.name][textureFrameIndex].safeToRender == false) {
+            var projectiveTextureFrameIndex = currentSceneFrame;
+            if (texturesMap[geocastSequenceObject.name].length == 1)
+              projectiveTextureFrameIndex = 0;
+            if(texturesMap[geocastSequenceObj.name][projectiveTextureFrameIndex].safeToRender == false) {
               detectedUnsafeToRenderTextures = true;
               return;
             }
@@ -1049,7 +1052,10 @@
 
           for (var i = 0; i < textureUnitsToUse.length; ++i) {
             gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
-            gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][textureFrameIndex]);
+            var projectiveTextureFrameIndex = currentSceneFrame;
+            if (texturesMap[textureKeys[i]].length == 1)
+              projectiveTextureFrameIndex = 0;
+            gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][projectiveTextureFrameIndex]);
           }
           var shaderTextureUnitsArray = textureUnitsToUse;
           if (shaderTextureUnitsArray.length < maximumCamTexturesEverBound) { // Workaround for chrome unbound texunit warnings
