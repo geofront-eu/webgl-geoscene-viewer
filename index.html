@@ -188,6 +188,9 @@
     var geoScene = null; // Main GeoScene object
     var currentMatchGroups = {}; // Active matchgroups
     var currentSceneFrame = 0; // Current geoscene frame (0 maps to geoScene.sequence[0])
+
+    var framePerFrameLoading = true; // Whether to load textures every time a frame asks for them or
+                                     // load ALL of the needed textures in a single asynchronous bulk loading
     
     function webGLStart() {
       canvas = document.getElementById("canvas");
@@ -235,7 +238,10 @@
           activateMatchgroup(0, true);
 
         generateSceneLattices();
-        loadTextures();
+        if (framePerFrameLoading == false)
+          loadTextures();
+        else
+          loadTexturesForFrame(currentSceneFrame);
       };
 
       updateLoadingProgress("Reading Geoscene", 10);
@@ -260,17 +266,29 @@
       var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
       curGeosceneFrame = Math.min(curGeosceneFrame + 1, geoScene.sequence[1]);
       currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+
+      if (framePerFrameLoading)
+        loadTexturesForFrame(currentSceneFrame);
+
       return curGeosceneFrame;
     }
     function decreaseFrameWithBoundsChecking() { // Ditto
       var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
       curGeosceneFrame = Math.max(geoScene.sequence[0], curGeosceneFrame - 1);
       currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+
+      if (framePerFrameLoading)
+        loadTexturesForFrame(currentSceneFrame);
+
       return curGeosceneFrame;
     }
     function setFrameWithBoundsChecking(value) { // Ditto, input with geoscene-range frame number
       var rangeCheckedValue = Math.max(geoScene.sequence[0], Math.min(geoScene.sequence[1], value));
       currentSceneFrame = rangeCheckedValue - geoScene.sequence[0];
+
+      if (framePerFrameLoading)
+        loadTexturesForFrame(currentSceneFrame);
+
       return rangeCheckedValue;
     }
     function getCurrentFrameInGeosceneRange() { // Returns the geoscene-range frame
@@ -362,6 +380,7 @@
     var loadedTextures = 0;
 
     function updateLoadingProgress(text, value, finalize) {
+      document.getElementById("loadingDiv").style.display = '';
       document.getElementById("loadingText").innerHTML = text;
       document.getElementById("loadingBar").value = value;
       if (finalize != undefined && finalize == true && value == 100) {
@@ -372,7 +391,88 @@
 
     function hideLoadingProgress() {
       document.getElementById("loadingDiv").style.display = 'none';
-    }    
+    }
+
+    var alreadyLoadedFrame = {};
+    function loadTexturesForFrame(frame) {
+
+      if (alreadyLoadedFrame[frame] != undefined && alreadyLoadedFrame[frame] == true)
+        return;
+
+      if (frame == currentSceneFrame) // Only update progress bar if still in the current frame
+        updateLoadingProgress("Readying Requests", 0);
+      var loadTextureFromFileForCurrentFrame = (function (frame) {
+        var storedFrame = frame;
+        return function(geocastSequenceObject) {
+          if (texturesMap[geocastSequenceObject.name] == undefined)
+            texturesMap[geocastSequenceObject.name] = {};
+          var textureIndex = storedFrame;
+          if (geocastSequenceObject.image.length == 1)
+            textureIndex = 0; // Deals with the 1-texture only case
+          if(texturesMap[geocastSequenceObject.name][textureIndex] != undefined) {
+            if (storedFrame == currentSceneFrame) // Only update progress bar if still in the current frame
+                updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
+            return; // Already in memory
+          }
+          texturesMap[geocastSequenceObject.name][textureIndex] = gl.createTexture();
+          texturesMap[geocastSequenceObject.name][textureIndex].image = new Image();
+          texturesMap[geocastSequenceObject.name][textureIndex].safeToRender = false;
+          texturesMap[geocastSequenceObject.name][textureIndex].image.onload = (function (j, f) {
+            var index = j;
+            var frameWhichRequestedLoading = f;
+            return function() {
+              gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
+              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+              gl.bindTexture(gl.TEXTURE_2D, null);
+              texturesMap[geocastSequenceObject.name][index].safeToRender = true;
+              if (frameWhichRequestedLoading == currentSceneFrame) // Only update progress bar if still in the current frame
+                updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
+            };
+          })(textureIndex, storedFrame);
+          texturesMap[geocastSequenceObject.name][textureIndex].image.src = geocastSequenceObject.image[textureIndex];     
+        }
+      });
+
+      loadedTextures = 0;
+      totalNumberOfTextures = 0;
+      var isSequenceObjectUsed = {}; // Allows fast usage checking for a sequence object
+      for(var groupId in currentMatchGroups) {
+        if (currentMatchGroups[groupId] == false)
+          continue;
+        geoScene.matchGroupSequence[groupId].matchSurfaceSequence.forEach(function(entry) {
+          isSequenceObjectUsed[entry] = true;
+        });
+        geoScene.matchGroupSequence[groupId].matchCamSequence.forEach(function(entry) {
+          isSequenceObjectUsed[entry] = true;
+        });
+      
+        geoScene.geoCastSequence.forEach(function(entry) {
+          if (isSequenceObjectUsed[entry.name] == true)
+            totalNumberOfTextures += 1;
+        });
+        geoScene.geoCastZSequence.forEach(function(entry) {
+          if (isSequenceObjectUsed[entry.name] == true)
+            totalNumberOfTextures += 1;
+        });
+      }
+      if (frame == currentSceneFrame) // Only update progress bar if still in the current frame
+        updateLoadingProgress("Loading Textures", 0);
+      for(var groupId in currentMatchGroups) {
+        executeActionForObjectsInSequence(
+          geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
+          geoScene.geoCastZSequence, loadTextureFromFileForCurrentFrame(frame), true);
+        executeActionForObjectsInSequence(
+          geoScene.matchGroupSequence[groupId].matchCamSequence, 
+          geoScene.geoCastSequence, loadTextureFromFileForCurrentFrame(frame), true);
+      }
+
+      alreadyLoadedFrame[frame] = true;
+    }
 
     function loadTextures() {
       updateLoadingProgress("Readying Requests", 0);
@@ -402,7 +502,7 @@
               texturesMap[geocastSequenceObject.name][index].safeToRender = true;
               updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
             };
-          })(i);
+          })(i);          
           texturesMap[geocastSequenceObject.name][i].image.src = geocastSequenceObject.image[i]; 
         }        
       };
@@ -418,6 +518,7 @@
       }
 
       totalNumberOfTextures = 0;
+      loadedTextures = 0;
       geoScene.geoCastSequence.forEach(function(entry) {
         if (isSequenceObjectUsed[entry.name] == true)
           totalNumberOfTextures += entry.image.length;
@@ -997,18 +1098,22 @@
 
     var maximumCamTexturesEverBound = 0;
 
-    function drawSurfaces() {
+    function drawSurfaces() {      
 
       var drawSurface = function (id) {
         var matchGroupId = id;
         return function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
           gl.useProgram(surfaceProgram);
 
+          if (texturesMap == undefined || texturesMap[geocastSequenceObject.name] == undefined)
+            return;
+
           var depthTextureFrameIndex = currentSceneFrame;
-          if (texturesMap[geocastSequenceObject.name].length == 1)
+          if (geocastSequenceObject.image.length == 1)
             depthTextureFrameIndex = 0;
           
-          if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)
+          if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex] == undefined ||
+              texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)
             return;
           var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
           if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
@@ -1023,12 +1128,14 @@
           var textureUnitsToUse = [];
           var textureKeys = [];
           var detectedUnsafeToRenderTextures = false;
+          var cameraNameToCurrentIndex = {};
           var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
             if (availableTexId > 15)
               console.log("Insufficient texture units");
             var projectiveTextureFrameIndex = currentSceneFrame;
-            if (texturesMap[geocastSequenceObject.name].length == 1)
+            if (geocastSequenceObj.image.length == 1)
               projectiveTextureFrameIndex = 0;
+            cameraNameToCurrentIndex[geocastSequenceObj.name] = projectiveTextureFrameIndex;
             if(texturesMap[geocastSequenceObj.name][projectiveTextureFrameIndex].safeToRender == false) {
               detectedUnsafeToRenderTextures = true;
               return;
@@ -1052,9 +1159,9 @@
 
           for (var i = 0; i < textureUnitsToUse.length; ++i) {
             gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
-            var projectiveTextureFrameIndex = currentSceneFrame;
-            if (texturesMap[textureKeys[i]].length == 1)
-              projectiveTextureFrameIndex = 0;
+            var projectiveTextureFrameIndex = cameraNameToCurrentIndex[textureKeys[i]];
+            if (texturesMap[textureKeys[i]][projectiveTextureFrameIndex].safeToRender == false)
+              return;
             gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][projectiveTextureFrameIndex]);
           }
           var shaderTextureUnitsArray = textureUnitsToUse;
@@ -1152,8 +1259,16 @@
         activateMatchgroup(id, false);
     }
 
-    function handleFrameChange(inputbox) {      
-      var rangeCheckedValue = setFrameWithBoundsChecking(parseInt(inputbox.value));
+    function handleFrameChange(inputbox) {
+      var newValue;
+      if (inputbox.value == '')
+        newValue = geoScene.sequence[0];
+      else {
+        newValue = parseInt(inputbox.value);
+        if (newValue == NaN)
+          newValue = geoScene.sequence[0];
+      }
+      var rangeCheckedValue = setFrameWithBoundsChecking(newValue);
       inputbox.value = rangeCheckedValue;
     }
 
