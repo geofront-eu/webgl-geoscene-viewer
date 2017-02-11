@@ -2,396 +2,225 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   <title>geocast viewer - WebGL</title>
-  <meta name="description" content="Geocarve Online Viewer">
+  <meta name="description" content="GeoCast in WebGL">
   <meta name="keywords" content="geofront,geocarve,geoscene,geocast,online,webgl,viewer">
   <meta name="viewport" content="width=device-width, user-scalable=no">
   
   <link href="css/style.css" rel="stylesheet">
 
+
+<script src="utils/glsl.js"></script>
   <script type="text/javascript" src="utils/js-geoscene-reader/gl-matrix-min.js"></script>
   <script type="text/javascript" src="utils/js-geoscene-reader/geoscene-filereader.js"></script>
   <script type="text/javascript" src="utils/webgl-utils.js"></script>
   <script type="text/javascript" src="utils/webgl-debug.js"></script>  
 </head>
-<script id="camera-frustum-lines-shader-fs" type="x-shader/x-fragment">
-  precision highp float;
 
-  uniform vec4 uLineColor;
-
-  void main(void) {
-    gl_FragColor = uLineColor;
-  }
-</script>
-<script id="camera-frustum-lines-shader-vs" type="x-shader/x-vertex">
-  precision highp float;
-  attribute vec3 aPosition;
-
-  uniform mat4 uViewMVMatrix;
-  uniform mat4 uViewProjMatrix;
-
-  uniform mat4 uGeoCastMVMatrix;
-  uniform mat4 uGeoCastProjMatrix;
-  uniform mat4 uGeoCastMVMatrix_Inverse;
-  uniform mat4 uGeoCastProjMatrix_Inverse;
-  uniform vec2 uGeoCastClipRange;
-
-  void main(void) {
-    gl_Position = uViewProjMatrix * uViewMVMatrix * (uGeoCastMVMatrix * uGeoCastProjMatrix_Inverse *  vec4(aPosition.xyz, 1.0));
-  }
-</script>
-<script id="surface-shader-fs" type="x-shader/x-fragment">
-  precision highp float;
-
-  #define SAMPLE_SLOTS 5
-  #extension GL_OES_standard_derivatives : enable
-
-  uniform mat4 uGeocastMVPMatrix[SAMPLE_SLOTS];
-  uniform sampler2D texGeocastSampler[SAMPLE_SLOTS];
-  uniform float uBoundSlots;
-
-  varying vec4 pass_discardFlag;
-  varying vec4 pass_aPosition;
-  varying vec3 pass_barycentricCoords;
-  uniform float uShowWireframe;
-
-  bool inFrustum(mat4 M, vec4 p) {
-    vec4 Pclip = M * p;
-    return abs(Pclip.x) <= Pclip.w && 
-           abs(Pclip.y) <= Pclip.w && 
-           0. <= abs(Pclip.z) && 
-           abs(Pclip.z) <= Pclip.w;
-  }
-
-  float edgeFactor() {
-    vec3 d = fwidth(pass_barycentricCoords);
-    vec3 a3 = smoothstep(vec3(0.0), d*1.0, pass_barycentricCoords);
-    return min(min(a3.x, a3.y), a3.z);
-  }
-
-  void main(void) {
-
-    if(pass_discardFlag.a < 0.999)
-      discard;
-
-    if(uShowWireframe == 0.0) { // Texture lookup shading
-
-      vec4 latticeBackground = vec4(0.1, 0.1, 0.1, 1.0); // Default to gray if no texture is present
-
-      vec4 aPosition = pass_aPosition;
-
-      vec4 final_color = latticeBackground;
-      bool backgroundColor = true;
-
-      for (int i = 0; i < SAMPLE_SLOTS; ++i) {
-        if (float(i) >= uBoundSlots)
-          break;
-
-        if (inFrustum(uGeocastMVPMatrix[i], aPosition)) {
-          // In-projector region, do a texture lookup
-          vec4 Pclip = uGeocastMVPMatrix[i] * aPosition;
-          vec2 texture_uv = vec2((Pclip.x + Pclip.w) / (2. * Pclip.w), (Pclip.y + Pclip.w) / (2. * Pclip.w));
-          vec4 texel = texture2D(texGeocastSampler[i], texture_uv);
-          
-          if (backgroundColor) { // Substitute the background color if this is the first match
-            backgroundColor = false;
-            final_color = texel;
-          } else {
-            final_color = mix(final_color, texel, 0.5);
-          }
-        }
-      }
-      gl_FragColor = final_color;
-    } else { // Wireframe anti-aliased shading and white fragments
-      gl_FragColor.rgb = vec3(edgeFactor()*0.95);
-      gl_FragColor.a = 1.0;
-    }
-  }
-</script>
-<script id="surface-shader-vs" type="x-shader/x-vertex">
-  precision highp float;
-  attribute vec3 aPosition; // Lattice data
-
-  // Scene data
-  uniform mat4 uViewMVMatrix;
-  uniform mat4 uViewProjMatrix;
-  // Floor data
-  uniform mat4 uFloorMVMatrix;
-  uniform mat4 uFloorProjMatrix;
-  uniform mat4 uFloorMVMatrix_Inverse;
-  uniform mat4 uFloorProjMatrix_Inverse;
-  uniform vec2 uFloorClipRange;
-
-  uniform sampler2D texDepthMapSampler;
-
-  varying vec4 pass_discardFlag;
-  varying vec4 pass_aPosition;
-  varying vec3 pass_barycentricCoords;
-  
-  void main(void) {
-
-    // Unpack from the Z-component the barycentric coords
-    pass_barycentricCoords = vec3(aPosition.z == 100.0 ? 1.0 : 0.0,
-                                  aPosition.z == 10.0 ? 1.0 : 0.0,
-                                  aPosition.z == 1.0 ? 1.0 : 0.0);
-
-    vec4 depth = texture2D(texDepthMapSampler, aPosition.xy);
-
-    vec4 depth_camspace;  // Purpose: "image" a pixel of depth Z (its view vector) into camera space
-    depth_camspace = uFloorProjMatrix * vec4(0.0, 0.0, mix(-uFloorClipRange.x, -uFloorClipRange.y, depth.x), 1.);
-
-    float model_depth = depth_camspace.z / depth_camspace.w;
-    // Discard background depths
-    pass_discardFlag = vec4(1.0, 1.0, 1.0, (depth.x == 1.0) ? 0.0 : 1.0);
-
-    // Lattice has coords [0;1], this doesn't use the full screen extents of the projector [-1;1]. Rescale
-    vec2 latticePos = vec2(aPosition.x, aPosition.y);
-    latticePos = latticePos * 2.0 - 1.0;
-
-    vec4 worldpos = uFloorMVMatrix * uFloorProjMatrix_Inverse * vec4(latticePos.xy,  model_depth, 1);
-    pass_aPosition = worldpos;
-    gl_Position = uViewProjMatrix * uViewMVMatrix * worldpos;
-  }
-</script>
-<script id="colorpicker-shader-fs" type="x-shader/x-fragment">
-  precision highp float;
-
-  uniform vec4 uColor;
-
-  void main(void) {
-      gl_FragColor = uColor;
-  }
-</script>
-<script id="colorpicker-shader-vs" type="x-shader/x-vertex">
-  precision highp float;
-  attribute vec3 aPosition;
-
-  uniform mat4 uViewMVMatrix;
-  uniform mat4 uViewProjMatrix;
-
-  uniform mat4 uGeoCastMVMatrix;
-  uniform mat4 uGeoCastProjMatrix;
-  uniform mat4 uGeoCastMVMatrix_Inverse;
-  uniform mat4 uGeoCastProjMatrix_Inverse;
-
-  void main(void) {
-    gl_Position = uViewProjMatrix * uViewMVMatrix * (uGeoCastMVMatrix * uGeoCastProjMatrix_Inverse *  vec4(aPosition.xyz, 1.0));
-  }
-</script>
 <script type="text/javascript">
-    var gl; // gl instance
-    var canvas;
 
-    // Global scene matrices
-    var perspectiveMatrix = mat4.create();
-    var modelViewMatrix = mat4.create();
+"use strict";
+
+var gl; // WebGL context
+var canvas;
+
+// Global scene matrices
+var perspectiveMatrix = mat4.create();
+var modelViewMatrix = mat4.create();
+
+var geoScene = null; // Main GeoScene object
+var currentMatchGroups = {}; // Active matchgroups
+var currentSceneFrame = 0; // Current geoscene frame (0 maps to geoScene.sequence[0])
+
+var framePerFrameLoading = true; // Whether to load textures every time a frame asks for them or
+// load ALL of the needed textures in a single asynchronous bulk loading
+
+function webGLStart() 
+{
+  canvas = document.getElementById("canvas");
+  var canvasContainer = document.getElementById("canvasContainer");      
+  try {
+    gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    canvas.width = canvasContainer.offsetWidth;
+    canvas.height = canvasContainer.offsetHeight;
+  } catch (e) {}
+  if (!gl) {
+    console.log("Could not initialize WebGL");
+  }
+  gl.getExtension('OES_standard_derivatives');
+  
+  setupGeometries();
+  setupShaderPrograms();
+  setupFramebuffers();
+  setupInput(canvas);
+  
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+  gl.enable(gl.DEPTH_TEST);
+  
+  var geoSceneObjectReady = function(object) {
+    updateLoadingProgress("Geoscene Loaded", 100);
+    geoScene = object;
+    currentSceneFrame = 0; // 0 maps to geoScene.sequence[0];        
     
-    var geoScene = null; // Main GeoScene object
-    var currentMatchGroups = {}; // Active matchgroups
-    var currentSceneFrame = 0; // Current geoscene frame (0 maps to geoScene.sequence[0])
-
-    var framePerFrameLoading = true; // Whether to load textures every time a frame asks for them or
-                                     // load ALL of the needed textures in a single asynchronous bulk loading
+    var frameCtrl = document.getElementById("numberbox_frame");
+    frameCtrl.min = geoScene.sequence[0];
+    frameCtrl.max = geoScene.sequence[1];
+    frameCtrl.value = geoScene.sequence[0];
+    document.getElementById("rangeFrame").innerHTML = "[" + geoScene.sequence[0] + ";" + geoScene.sequence[1] + "]";
+    var matchgroupsDiv = document.getElementById("matchgroups_div");
+    var divHtml = "";
+    for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
+      divHtml += "<label for=\"matchgroup_checkbox_" + i + "\" class=\"aligncheckbox\"><input type=\"checkbox\" " +
+        "id=\"matchgroup_checkbox_" + i + "\" class=\"aligncheckbox\" onclick=\"handleMatchgroupClick(this, " + i + ");\"><span>&nbsp;MatchGroup " +
+        i + "</span></label><br/>";
+    }
+    matchgroupsDiv.innerHTML = divHtml;
     
-    function webGLStart() {
-      canvas = document.getElementById("canvas");
-      var canvasContainer = document.getElementById("canvasContainer");      
-      try {
-        gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
-        canvas.width = canvasContainer.offsetWidth;
-        canvas.height = canvasContainer.offsetHeight;
-        gl.viewportWidth = canvas.width;
-        gl.viewportHeight = canvas.height;
-      } catch (e) {}
-      if (!gl) {
-        console.log("Could not initialize WebGL");
-      }
-      gl.getExtension('OES_standard_derivatives');
-
-      setupGeometries();
-      setupShaderPrograms();
-      setupFramebuffers();
-      setupInput(canvas);
-
-      gl.clearColor(0.0, 0.0, 0.0, 1.0);
-      gl.enable(gl.DEPTH_TEST);
-
-      var geoSceneObjectReady = function(object) {
-        updateLoadingProgress("Geoscene Loaded", 100);
-        geoScene = object;
-        currentSceneFrame = 0; // 0 maps to geoScene.sequence[0];        
-
-        var frameCtrl = document.getElementById("numberbox_frame");
-        frameCtrl.min = geoScene.sequence[0];
-        frameCtrl.max = geoScene.sequence[1];
-        frameCtrl.value = geoScene.sequence[0];
-        document.getElementById("rangeFrame").innerHTML = "[" + geoScene.sequence[0] + ";" + geoScene.sequence[1] + "]";
-        var matchgroupsDiv = document.getElementById("matchgroups_div");
-        var divHtml = "";
-        for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
-          divHtml += "<label for=\"matchgroup_checkbox_" + i + "\" class=\"aligncheckbox\"><input type=\"checkbox\" " +
-          "id=\"matchgroup_checkbox_" + i + "\" class=\"aligncheckbox\" onclick=\"handleMatchgroupClick(this, " + i + ");\"><span>&nbsp;MatchGroup " +
-          i + "</span></label><br/>";
-        }
-        matchgroupsDiv.innerHTML = divHtml;
-
-        if (geoScene.matchGroupSequence.length > 0)
+    if (geoScene.matchGroupSequence.length > 0)
           activateMatchgroup(0, true);
+    
+    generateSceneLattices();
+    if (framePerFrameLoading == false)
+      loadTextures();
+    else
+      loadTexturesForFrame(currentSceneFrame);
+  };
+  
+  updateLoadingProgress("Reading Geoscene", 10);
+  readGeoSceneFile("data/sedan/sedan.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+  
+  paintLoop();
+}
 
-        generateSceneLattices();
-        if (framePerFrameLoading == false)
-          loadTextures();
-        else
-          loadTexturesForFrame(currentSceneFrame);
-      };
+function onResizeCanvas() 
+{
+  var canvasContainer = document.getElementById("canvasContainer");
+  canvas.width = canvasContainer.offsetWidth;
+  canvas.height = canvasContainer.offsetHeight;
+  gl.canvas.width = canvas.width;
+  gl.canvas.height = canvas.height;
+  setupFramebuffers(); // Resize secondary framebuffers
+}
 
-      updateLoadingProgress("Reading Geoscene", 10);
-      readGeoSceneFile("data/streetscene/scene.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
-      
-      paintLoop();
+function getCurrentMatchgroup() 
+{
+  return currentMatchGroup;
+}
+
+function increaseFrameWithBoundsChecking() 
+{ 
+  // Returns the new geoscene-range frame
+  var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
+  curGeosceneFrame = Math.min(curGeosceneFrame + 1, geoScene.sequence[1]);
+  currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+  
+  if (framePerFrameLoading)
+    loadTexturesForFrame(currentSceneFrame);
+  
+  return curGeosceneFrame;
+}
+
+function decreaseFrameWithBoundsChecking() 
+{ 
+  var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
+  curGeosceneFrame = Math.max(geoScene.sequence[0], curGeosceneFrame - 1);
+  currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+  
+  if (framePerFrameLoading)
+    loadTexturesForFrame(currentSceneFrame);
+  
+  return curGeosceneFrame;
+}
+
+function setFrameWithBoundsChecking(value) 
+{ 
+  var rangeCheckedValue = Math.max(geoScene.sequence[0], Math.min(geoScene.sequence[1], value));
+  currentSceneFrame = rangeCheckedValue - geoScene.sequence[0];
+  
+  if (framePerFrameLoading)
+    loadTexturesForFrame(currentSceneFrame);
+  
+  return rangeCheckedValue;
+}
+
+function getCurrentFrameInGeosceneRange() 
+{ 
+  return currentSceneFrame + geoScene.sequence[0];// Returns the geoscene-range frame
+}
+
+var latticeGridCache = {}; // A cache for different resolution lattices
+
+function generateSceneLattices() 
+{
+  updateLoadingProgress("Generating Grids", 0);
+  for (var i = 0; i < geoScene.geoCastZSequence.length; ++i) 
+  {
+    var sizeKey = geoScene.geoCastZSequence[i].size[0] + 'x' + geoScene.geoCastZSequence[i].size[1];
+
+    if (latticeGridCache.sizeKey == undefined) 
+    {
+      latticeGridCache[sizeKey] = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[sizeKey]);
+      latticeGridCache[sizeKey].width = geoScene.geoCastZSequence[i].size[0];
+      latticeGridCache[sizeKey].height = geoScene.geoCastZSequence[i].size[1];
+      var vbo_data = generateArbitraryDimensionLattice(geoScene.geoCastZSequence[i].size[0], geoScene.geoCastZSequence[i].size[1]);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
+      latticeGridCache[sizeKey].n_of_vertices = vbo_data.length /4; // 4 floats per vertex
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
 
-    function onResizeCanvas() {
-      var canvasContainer = document.getElementById("canvasContainer");
-      canvas.width = canvasContainer.offsetWidth;
-      canvas.height = canvasContainer.offsetHeight;
-      gl.viewportWidth = canvas.width;
-      gl.viewportHeight = canvas.height;
-      setupFramebuffers(); // Resize secondary framebuffers
-    }
+    updateLoadingProgress("Generating Grids", 100 * ((i + 1) / geoScene.geoCastZSequence.length));
+  }
 
-    function getCurrentMatchgroup() {
-      return currentMatchGroup;
-    }
-    function increaseFrameWithBoundsChecking() { // Returns the new geoscene-range frame
-      var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
-      curGeosceneFrame = Math.min(curGeosceneFrame + 1, geoScene.sequence[1]);
-      currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+  updateLoadingProgress("Grids Ready", 100);
+}
 
-      if (framePerFrameLoading)
-        loadTexturesForFrame(currentSceneFrame);
+function generateArbitraryDimensionLattice(width, height) 
+{ 
+  var V = []; // 4 triangles to cover triangle in all potential turning directions
 
-      return curGeosceneFrame;
-    }
-    function decreaseFrameWithBoundsChecking() { // Ditto
-      var curGeosceneFrame = currentSceneFrame + geoScene.sequence[0];
-      curGeosceneFrame = Math.max(geoScene.sequence[0], curGeosceneFrame - 1);
-      currentSceneFrame = curGeosceneFrame - geoScene.sequence[0];
+  for (var y = 0; y < height - 1; y++) 
+    for (var x = 0; x < width - 1; x++) 
+  {
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(0.0);      V.push(0.0);   //  00-10 : Triangle type 0 
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(1.0);      V.push(0.0);   //  | /
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(0.1);      V.push(0.0);   //  01
 
-      if (framePerFrameLoading)
-        loadTexturesForFrame(currentSceneFrame);
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(1.0);      V.push(1.0);   //     10 : Triangle type 1 
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(1.1);      V.push(1.0);   //    / |
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(0.1);      V.push(1.0);   //  01-11
 
-      return curGeosceneFrame;
-    }
-    function setFrameWithBoundsChecking(value) { // Ditto, input with geoscene-range frame number
-      var rangeCheckedValue = Math.max(geoScene.sequence[0], Math.min(geoScene.sequence[1], value));
-      currentSceneFrame = rangeCheckedValue - geoScene.sequence[0];
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(0.0);      V.push(2.0);   //  00-10 : Triangle type 2
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(1.0);      V.push(2.0);   //    \ |
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(1.1);      V.push(2.0);   //     11
 
-      if (framePerFrameLoading)
-        loadTexturesForFrame(currentSceneFrame);
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(0.0);      V.push(3.0);   //  00    : Triangle type 3
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(1.1);      V.push(3.0);   //  | \
+    V.push((x + 0.5)/width);    V.push((y + 0.5)/height);    V.push(0.1);      V.push(3.0);   //  01-11
+  }
 
-      return rangeCheckedValue;
-    }
-    function getCurrentFrameInGeosceneRange() { // Returns the geoscene-range frame
-      return currentSceneFrame + geoScene.sequence[0];
-    }
+  return V;
+}
 
-    var latticeGridCache = {}; // A cache for different resolution lattices
 
-    function generateSceneLattices() {
-      updateLoadingProgress("Generating Grids", 0);
-      for (var i = 0; i < geoScene.geoCastZSequence.length; ++i) {
-        var sizeKey = geoScene.geoCastZSequence[i].size[0] + 'x' + geoScene.geoCastZSequence[i].size[1];
-        if (latticeGridCache.sizeKey == undefined) {
-          latticeGridCache[sizeKey] = gl.createBuffer();
-          gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[sizeKey]);
-          var vbo_data = generateArbitraryDimensionLattice(geoScene.geoCastZSequence[i].size[0], geoScene.geoCastZSequence[i].size[1]);
-          for (var i = 2, bc = 100; i < vbo_data.length; i += 3) { // Encode 100, 10, 1 as barycentric coords in the unused Z coord
-            vbo_data[i] = bc;
-            if (bc == 1)
-              bc = 100;
-            else
-              bc /= 10;
-          }
-          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
-          latticeGridCache[sizeKey].n_of_vertices = vbo_data.length / 3; // Number of vertices to use
-          gl.bindBuffer(gl.ARRAY_BUFFER, null);
-        }
-        updateLoadingProgress("Generating Grids", 100 * ((i + 1) / geoScene.geoCastZSequence.length));
-      }
-      updateLoadingProgress("Grids Ready", 100);
-    }
+var texturesMap = {};
+var totalNumberOfTextures = 0;
+var loadedTextures = 0;
 
-    function generateArbitraryDimensionLattice(width, height) { // Generates a lattice of (width x height) vertices with
-                                                                // normalized coords in the range [0;1]x[0;1]
-      var vertices = new Float32Array(((2 * (width + 1 /* Last two for degenerate vertices*/)) * (height - 1)) * 3 /* xyz */ 
-        - 2 * 3 /* Last row doesn't need the two degenerate vertices at the end */);
-      var normalizeX = function(value) { // Normalize a value between [0;width] to the range [0;1]
-        return value / width;
-      }
-      var normalizeY = function(value) { // Normalize a value between [0;height] to the range [0;1]
-        return value / height;
-      }
-      for (var y = 0; y < height - 1; ++y) {
-        // 1 -- 2
-        // |  / |
-        // | /  |
-        // 5 -- 6
+function updateLoadingProgress(text, value, finalize) 
+{
+  document.getElementById("loadingDiv").style.display = '';
+  document.getElementById("loadingText").innerHTML = text;
+  document.getElementById("loadingBar").value = value;
+  if (finalize != undefined && finalize == true && value == 100) {
+    document.getElementById("loadingText").innerHTML = "Viewer Ready";
+    setTimeout(hideLoadingProgress, 3000);
+  }
+}
 
-        var base_off = (y * (2 * (width + 1))) * 3;
-
-        // Insert 1 and 5
-        vertices[ base_off + 0 ] = normalizeX(0 + 0.5);
-        vertices[ base_off + 1 ] = normalizeY(y + 0.5);
-        vertices[ base_off + 2 ] = 0;
-
-        vertices[ base_off + 3 ] = normalizeX(0 + 0.5);
-        vertices[ base_off + 4 ] = normalizeY(y + 1.5);
-        vertices[ base_off + 5 ] = 0;
-
-        for (var x = 0; x < width - 1; ++x) {
-
-           // Insert 2 and 6
-           vertices[ base_off + ((x + 1 /* 1 and 5 are already in place */) * 2 * 3) + 0 ] = normalizeX(x + 1.5);
-           vertices[ base_off + ((x + 1) * 2 * 3) + 1 ] = normalizeY(y + 0.5);
-           vertices[ base_off + ((x + 1) * 2 * 3) + 2 ] = 0;
-
-           vertices[ base_off + ((x + 1) * 2 * 3) + 3 ] = normalizeX(x + 1.5);
-           vertices[ base_off + ((x + 1) * 2 * 3) + 4 ] = normalizeY(y + 1.5);
-           vertices[ base_off + ((x + 1) * 2 * 3) + 5 ] = 0;
-        }
-
-        if (y < (height - 1) - 1) { // Do not insert the two degenerate points if we finished the last row
-
-          // Insert two extra points to form degenerate triangles (end of row)
-          vertices[ base_off + (width * 2 * 3) + 0 ] = vertices[ base_off + (width * 2 * 3) + 0 - 3 ];
-          vertices[ base_off + (width * 2 * 3) + 1 ] = vertices[ base_off + (width * 2 * 3) + 1 - 3 ];
-          vertices[ base_off + (width * 2 * 3) + 2 ] = vertices[ base_off + (width * 2 * 3) + 2 - 3 ];
-
-          vertices[ base_off + (width * 2 * 3) + 3 ] = normalizeX(0 + 0.5); // Like 5
-          vertices[ base_off + (width * 2 * 3) + 4 ] = normalizeY(y + 1.5);
-          vertices[ base_off + (width * 2 * 3) + 5 ] = 0;
-        }
-      }
-      return vertices;
-    }
-
-    var texturesMap = {};
-    var totalNumberOfTextures = 0;
-    var loadedTextures = 0;
-
-    function updateLoadingProgress(text, value, finalize) {
-      document.getElementById("loadingDiv").style.display = '';
-      document.getElementById("loadingText").innerHTML = text;
-      document.getElementById("loadingBar").value = value;
-      if (finalize != undefined && finalize == true && value == 100) {
-        document.getElementById("loadingText").innerHTML = "Viewer Ready";
-        setTimeout(hideLoadingProgress, 3000);
-      }
-    }
-
-    function hideLoadingProgress() {
-      document.getElementById("loadingDiv").style.display = 'none';
-    }
+function hideLoadingProgress() 
+{
+  document.getElementById("loadingDiv").style.display = 'none';
+}
 
     var alreadyLoadedFrame = {};
     function loadTexturesForFrame(frame) {
@@ -401,47 +230,59 @@
 
       if (frame == currentSceneFrame) // Only update progress bar if still in the current frame
         updateLoadingProgress("Readying Requests", 0);
-      var loadTextureFromFileForCurrentFrame = (function (frame) {
-        var storedFrame = frame;
-        return function(geocastSequenceObject) {
-          if (texturesMap[geocastSequenceObject.name] == undefined)
-            texturesMap[geocastSequenceObject.name] = {};
-          var textureIndex = storedFrame;
-          if (geocastSequenceObject.image.length == 1)
-            textureIndex = 0; // Deals with the 1-texture only case
-          if(texturesMap[geocastSequenceObject.name][textureIndex] != undefined) {
-            if (storedFrame == currentSceneFrame) // Only update progress bar if still in the current frame
+
+      var loadTextureFromFileForCurrentFrame = (
+	function (frame) 
+	{
+          var storedFrame = frame;
+          return function(geocastSequenceObject) 
+	  {
+            if (texturesMap[geocastSequenceObject.name] == undefined)
+              texturesMap[geocastSequenceObject.name] = {};
+          
+	    var textureIndex = storedFrame;
+            if (geocastSequenceObject.image.length == 1)
+              textureIndex = 0; // Deals with the 1-texture only case
+            if(texturesMap[geocastSequenceObject.name][textureIndex] != undefined) 
+	    {
+              if (storedFrame == currentSceneFrame) // Only update progress bar if still in the current frame
                 updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
-            return; // Already in memory
-          }
-          texturesMap[geocastSequenceObject.name][textureIndex] = gl.createTexture();
-          texturesMap[geocastSequenceObject.name][textureIndex].image = new Image();
-          texturesMap[geocastSequenceObject.name][textureIndex].safeToRender = false;
-          texturesMap[geocastSequenceObject.name][textureIndex].image.onload = (function (j, f) {
-            var index = j;
-            var frameWhichRequestedLoading = f;
-            return function() {
-              gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
-              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-              gl.bindTexture(gl.TEXTURE_2D, null);
-              texturesMap[geocastSequenceObject.name][index].safeToRender = true;
-              if (frameWhichRequestedLoading == currentSceneFrame) // Only update progress bar if still in the current frame
-                updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
-            };
-          })(textureIndex, storedFrame);
-          texturesMap[geocastSequenceObject.name][textureIndex].image.src = geocastSequenceObject.image[textureIndex];     
+              return; // Already in memory
+            }
+
+            texturesMap[geocastSequenceObject.name][textureIndex] = gl.createTexture();
+            texturesMap[geocastSequenceObject.name][textureIndex].image = new Image();
+            texturesMap[geocastSequenceObject.name][textureIndex].safeToRender = false;
+            texturesMap[geocastSequenceObject.name][textureIndex].image.onload = 
+	      (function (j, f) 
+	       {
+		 var index = j;
+		 var frameWhichRequestedLoading = f;
+		 return function() 
+		 {
+		   gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
+		   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+		   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
+		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		   gl.bindTexture(gl.TEXTURE_2D, null);
+		   texturesMap[geocastSequenceObject.name][index].safeToRender = true;
+		   if (frameWhichRequestedLoading == currentSceneFrame) // Only update progress bar if still in the current frame
+                     updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
+		 };
+               })(textureIndex, storedFrame);
+            texturesMap[geocastSequenceObject.name][textureIndex].image.src = geocastSequenceObject.image[textureIndex];     
         }
       });
 
       loadedTextures = 0;
       totalNumberOfTextures = 0;
       var isSequenceObjectUsed = {}; // Allows fast usage checking for a sequence object
-      for(var groupId in currentMatchGroups) {
+
+      for(var groupId in currentMatchGroups) 
+      {
         if (currentMatchGroups[groupId] == false)
           continue;
         geoScene.matchGroupSequence[groupId].matchSurfaceSequence.forEach(function(entry) {
@@ -474,11 +315,14 @@
       alreadyLoadedFrame[frame] = true;
     }
 
-    function loadTextures() {
-      updateLoadingProgress("Readying Requests", 0);
-      var loadTextureFromFile = function(geocastSequenceObject) {
-        if (texturesMap[geocastSequenceObject.name] != undefined)
-          return;
+function loadTextures() 
+{
+  updateLoadingProgress("Readying Requests", 0);
+
+  var loadTextureFromFile = function(geocastSequenceObject) 
+  {
+    if (texturesMap[geocastSequenceObject.name] != undefined)
+      return;
         texturesMap[geocastSequenceObject.name] = [];
         var numberOfTextures = geoScene.sequence[1] - geoScene.sequence[0] + 1; // Both bounds inclusive
         if (geocastSequenceObject.image.length == 1)
@@ -538,261 +382,188 @@
       }
     }
 
-    var camera_frustum_lines_data;
+var camera_frustum_lines_data;
 
-    function setupGeometries() {
-      camera_frustum_lines_data = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
-      vbo_data = [
-        1.0, 1.0, -1.0,
-        1.0, 1.0, 1.0,
-        -1.0, 1.0, -1.0,
-        -1.0, 1.0, 1.0,
-        1.0, -1.0, -1.0,
-        1.0, -1.0, 1.0,
-        -1.0, -1.0, -1.0,
-        -1.0, -1.0, 1.0
-      ];
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
-      camera_frustum_lines_data.indices = gl.createBuffer();
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.indices);
-      indices = [
-        0, 1,
-        4, 5,
-        4, 0,
-        5, 1,
-        3, 2,
-        7, 6,
-        3, 7,
-        2, 6,
-        3, 1,
-        2, 0,
-        7, 5,
-        6, 4
-      ];
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
-      camera_frustum_lines_data.indices_length = indices.length;
-      camera_frustum_lines_data.triangle_indices = gl.createBuffer();
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.triangle_indices);
-      indices = [
-        // Left
-        0, 1, 4,
-        4, 1, 5,
-        // Right
-        3, 2, 7,
-        7, 2, 6,
-        // near plane
-        6, 2, 0,
-        6, 0, 4,
-        // bottom
-        6, 4, 7,
-        7, 4, 5,
-        // up
-        2, 3, 1,
-        2, 1, 0,
-        // far plane
-        5, 1, 3,
-        5, 3, 7
-      ];
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
-      camera_frustum_lines_data.triangle_indices_length = indices.length;
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+function setupGeometries() 
+{
+  camera_frustum_lines_data = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
+  var vbo_data = [
+      +1.0, 1.0, -1.0,
+      +1.0, 1.0, 1.0,
+      -1.0, 1.0, -1.0,
+      -1.0, 1.0, 1.0,
+      +1.0, -1.0, -1.0,
+      +1.0, -1.0, 1.0,
+      -1.0, -1.0, -1.0,
+      -1.0, -1.0, 1.0
+  ];
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vbo_data), gl.STATIC_DRAW);
+  camera_frustum_lines_data.indices = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.indices);
+  var indices = [
+    0, 1,        4, 5,        4, 0,        5, 1,
+    3, 2,        7, 6,        3, 7,        2, 6,
+    3, 1,        2, 0,        7, 5,        6, 4
+  ];
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+  camera_frustum_lines_data.indices_length = indices.length;
+  camera_frustum_lines_data.triangle_indices = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.triangle_indices);
+  var indices = [
+    0, 1, 4,        4, 1, 5,        // Left
+    3, 2, 7,        7, 2, 6,        // Right
+    6, 2, 0,        6, 0, 4,        // near plane
+    6, 4, 7,        7, 4, 5,        // bottom
+    2, 3, 1,        2, 1, 0,        // up
+    5, 1, 3,        5, 3, 7         // far plane
+  ];
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+  camera_frustum_lines_data.triangle_indices_length = indices.length;
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+  
+  // Note: Lattice data cannot be statically generated here - it depends on the image dimensions in the GeoScene (GeoCastZ, see @generateSceneLattices())
+}
 
-      // Lattice data cannot be statically generated here - it depends on the image dimensions in the GeoScene (GeoCastZ, see @generateSceneLattices())
+
+var glsl_programs = 
+[ { name: "camera_frustum_lines", vertex_src:['glsl/camera_frustum_lines.vert.glsl'], fragment_src: ['glsl/camera_frustum_lines.frag.glsl']},
+  { name: "colorpicker", vertex_src:['glsl/colorpicker.vert.glsl'], fragment_src: ['glsl/colorpicker.frag.glsl']},
+  { name: "surface", vertex_src:['glsl/surface.vert.glsl'], fragment_src: ['glsl/surface.frag.glsl']},
+];
+
+function setupShaderPrograms() 
+{      
+  glsl_load(gl, glsl_programs);
+}
+  
+var colorPickerFramebuffer;
+var colorPickerRenderTexture;
+
+function setupFramebuffers() 
+{
+  // Init secondary framebuffer for color picking
+  colorPickerFramebuffer = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, colorPickerFramebuffer);
+  colorPickerFramebuffer.width = gl.canvas.width;
+  colorPickerFramebuffer.height = gl.canvas.height;
+  // This is the only texture that is set up here because related to the framebuffer
+  colorPickerRenderTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, colorPickerRenderTexture);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);        
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, colorPickerFramebuffer.width, colorPickerFramebuffer.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  // Attach the texture to the framebuffer
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorPickerRenderTexture, 0);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
+var theta = 200.0; // Degrees spherical coord
+var phi = 30.0;   // Degrees spherical coord
+var sphere_d = 100.0; // Start spherical distance
+var wireframeEnabled = false;
+var noTimelineOnFrustums = false;
+
+var mouseDown = false;
+var mouseDownElementId;
+var mouseDownAction = null; // Either "RotateScene" or "TimelineDrag"
+var dragDeltas = 0; // Accumulates timeline drag deltas from the mouse (allows a smoother scroll)
+var lastMouseX = null;
+var lastMouseY = null;
+
+function setupInput(canvas) 
+{
+  canvas.onmousedown = handleMouseDown;
+  canvas.onmouseup = handleMouseUp;
+  canvas.onmousemove = handleMouseMove;
+  canvas.addEventListener('mouseout', onMouseOutOfCanvas, true); // Stop canvas input if mouse gets out of it      
+  canvas.onwheel = handleMouseWheel;
+  document.onkeydown = handleKeyDown;
+  canvas.addEventListener('touchstart', onTouchStart);
+  canvas.addEventListener('touchmove', onTouchMove);
+  canvas.addEventListener('touchend', onTouchEnd);
+}
+
+var touchFingers = {};
+var startZoomDistance = -1;
+
+function calculateTwoTouchPointsDistance() 
+{
+  var distance = -1;
+  if (Object.keys(touchFingers).length == 2) { // Calculate starting zoom distance
+    var points = [];
+    for (var key in touchFingers) {
+      var point = [touchFingers[key].startX, touchFingers[key].startY];
+      points.push(point);
+    }        
+    distance = Math.sqrt(
+      Math.pow(points[0][0] - points[1][0], 2) +
+        Math.pow(points[0][1] - points[1][1], 2)
+    );
+  }
+  return distance;
+}
+
+function getOffsetXY(e) 
+{ // Workaround for unsupported offsetX/offsetY (not yet standardized)
+  var getCumulativeOffset = function(child) {
+    var x = 0, y = 0;
+    while (child && !isNaN(child.offsetLeft) && !isNaN(child.offsetTop)) {
+      x += child.offsetLeft - child.scrollLeft;
+      y += child.offsetTop - child.scrollTop;
+      child = child.offsetParent;
     }
+    return { top: y, left: x };
+  };      
+  if(e.offsetX == undefined) { // Slower but more compatible
+    var coffs = getCumulativeOffset(canvas);
+    return { top: e.pageY - coffs.top, left: e.pageX - coffs.left };
+  }
+  else
+    return { top: e.offsetY, left: e.offsetX };
+}
 
-    var cameraFrustumLinesProgram;
-    var surfaceProgram;
-    var colorPickerProgram;
+function onTouchStart(event) {
+  event.preventDefault();
+  for (var i = 0; i < event.changedTouches.length; ++i) {
+    var touch = event.changedTouches[i];
+    var offXY = getOffsetXY(touch);
+    touchFingers[touch.identifier] = {
+      startX: parseInt(offXY.left),
+      startY: parseInt(offXY.top)
+    };
+    mouseDownAction = "RotateScene";
+    if (noTimelineOnFrustums == false) {
+      var timelineClick = executeColorPicking(offXY.left, offXY.top);
+      if (timelineClick)
+        mouseDownAction = "TimelineDrag";
+    }
+  }
+  startZoomDistance = calculateTwoTouchPointsDistance();
+}
 
-    function setupShaderPrograms() {      
-      var vertexShader = getShader(gl, "camera-frustum-lines-shader-vs");
-      var fragmentShader = getShader(gl, "camera-frustum-lines-shader-fs");
-      cameraFrustumLinesProgram = gl.createProgram();
-      gl.attachShader(cameraFrustumLinesProgram, vertexShader);
-      gl.attachShader(cameraFrustumLinesProgram, fragmentShader);
-      gl.linkProgram(cameraFrustumLinesProgram);
-      if (!gl.getProgramParameter(cameraFrustumLinesProgram, gl.LINK_STATUS))
-          console.log("Could not initialize shaders");
-      gl.useProgram(cameraFrustumLinesProgram);
-      cameraFrustumLinesProgram.aPosition = gl.getAttribLocation(cameraFrustumLinesProgram, "aPosition");      
-      gl.enableVertexAttribArray(cameraFrustumLinesProgram.aPosition);
-      cameraFrustumLinesProgram.uViewMVMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uViewMVMatrix");
-      cameraFrustumLinesProgram.uViewProjMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uViewProjMatrix");
-      cameraFrustumLinesProgram.uGeoCastMVMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastMVMatrix");
-      cameraFrustumLinesProgram.uGeoCastProjMatrix = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastProjMatrix");
-      cameraFrustumLinesProgram.uGeoCastMVMatrix_Inverse = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastMVMatrix_Inverse");
-      cameraFrustumLinesProgram.uGeoCastProjMatrix_Inverse = gl.getUniformLocation(cameraFrustumLinesProgram, "uGeoCastProjMatrix_Inverse");
-      cameraFrustumLinesProgram.uLineColor = gl.getUniformLocation(cameraFrustumLinesProgram, "uLineColor");
+function onTouchMove(event) {
+  if (Object.keys(touchFingers).length == 1) {
+    
+    var touch = touchFingers[event.changedTouches[0].identifier];
+    if (touch == undefined)
+      return;
+    
+    var offXY = getOffsetXY(event.changedTouches[0]);
+    var newX = parseInt(offXY.left);
+    var newY = parseInt(offXY.top);
+    
+    if (mouseDownAction == "RotateScene") { // Rotation
       
-      vertexShader = getShader(gl, "surface-shader-vs");
-      fragmentShader = getShader(gl, "surface-shader-fs");
-      surfaceProgram = gl.createProgram();
-      gl.attachShader(surfaceProgram, vertexShader);
-      gl.attachShader(surfaceProgram, fragmentShader);
-      gl.linkProgram(surfaceProgram);
-      if (!gl.getProgramParameter(surfaceProgram, gl.LINK_STATUS))
-          console.log("Could not initialize shaders");
-      gl.useProgram(surfaceProgram);
-      surfaceProgram.aPosition = gl.getAttribLocation(surfaceProgram, "aPosition");      
-      gl.enableVertexAttribArray(surfaceProgram.aPosition);
-      surfaceProgram.uViewMVMatrix = gl.getUniformLocation(surfaceProgram, "uViewMVMatrix");
-      surfaceProgram.uViewProjMatrix = gl.getUniformLocation(surfaceProgram, "uViewProjMatrix");
-      surfaceProgram.uFloorMVMatrix = gl.getUniformLocation(surfaceProgram, "uFloorMVMatrix");
-      surfaceProgram.uFloorProjMatrix = gl.getUniformLocation(surfaceProgram, "uFloorProjMatrix");
-      surfaceProgram.uFloorMVMatrix_Inverse = gl.getUniformLocation(surfaceProgram, "uFloorMVMatrix_Inverse");
-      surfaceProgram.uFloorProjMatrix_Inverse = gl.getUniformLocation(surfaceProgram, "uFloorProjMatrix_Inverse");
-      surfaceProgram.texDepthMapSampler = gl.getUniformLocation(surfaceProgram, "texDepthMapSampler");
-      surfaceProgram.uFloorClipRange = gl.getUniformLocation(surfaceProgram, "uFloorClipRange");
-      surfaceProgram.uGeocastMVPMatrix = gl.getUniformLocation(surfaceProgram, "uGeocastMVPMatrix");
-      surfaceProgram.texGeocastSampler = gl.getUniformLocation(surfaceProgram, "texGeocastSampler[0]");
-      surfaceProgram.uBoundSlots = gl.getUniformLocation(surfaceProgram, "uBoundSlots");
-      surfaceProgram.uShowWireframe = gl.getUniformLocation(surfaceProgram, "uShowWireframe");
-
-      vertexShader = getShader(gl, "colorpicker-shader-vs");
-      fragmentShader = getShader(gl, "colorpicker-shader-fs");
-      colorPickerProgram = gl.createProgram();
-      gl.attachShader(colorPickerProgram, vertexShader);
-      gl.attachShader(colorPickerProgram, fragmentShader);
-      gl.linkProgram(colorPickerProgram);
-      if (!gl.getProgramParameter(colorPickerProgram, gl.LINK_STATUS))
-          alert("Could not initialize shaders");
-      gl.useProgram(colorPickerProgram);
-      // Bind uniforms and attributes      
-      colorPickerProgram.uViewMVMatrix = gl.getUniformLocation(colorPickerProgram, "uViewMVMatrix");
-      colorPickerProgram.uViewProjMatrix = gl.getUniformLocation(colorPickerProgram, "uViewProjMatrix");
-      colorPickerProgram.uGeoCastMVMatrix = gl.getUniformLocation(colorPickerProgram, "uGeoCastMVMatrix");
-      colorPickerProgram.uGeoCastProjMatrix = gl.getUniformLocation(colorPickerProgram, "uGeoCastProjMatrix");
-      colorPickerProgram.uGeoCastMVMatrix_Inverse = gl.getUniformLocation(colorPickerProgram, "uGeoCastMVMatrix_Inverse");
-      colorPickerProgram.uGeoCastProjMatrix_Inverse = gl.getUniformLocation(colorPickerProgram, "uGeoCastProjMatrix_Inverse");
-      colorPickerProgram.uColor = gl.getUniformLocation(colorPickerProgram, "uColor");
-      colorPickerProgram.aPosition = gl.getAttribLocation(colorPickerProgram, "aPosition");
-      gl.enableVertexAttribArray(colorPickerProgram.aPosition);
-    }
-
-    var colorPickerFramebuffer;
-    var colorPickerRenderTexture;
-
-    function setupFramebuffers() {
-      // Init secondary framebuffer for color picking
-      colorPickerFramebuffer = gl.createFramebuffer();
-      gl.bindFramebuffer(gl.FRAMEBUFFER, colorPickerFramebuffer);
-      colorPickerFramebuffer.width = gl.viewportWidth;
-      colorPickerFramebuffer.height = gl.viewportHeight;
-      // This is the only texture that is set up here because related to the framebuffer
-      colorPickerRenderTexture = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, colorPickerRenderTexture);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);        
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, colorPickerFramebuffer.width, colorPickerFramebuffer.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      // Attach the texture to the framebuffer
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorPickerRenderTexture, 0);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    }
-
-    var projectionCenter = vec3.fromValues(0, 0, 0); // The center of the projection where the camera points at all times
-    var theta = 200.0; // Degrees spherical coord
-    var phi = 30.0;   // Degrees spherical coord
-    var sphere_d = 100.0; // Start spherical distance
-    var wireframeEnabled = false;
-    var noTimelineOnFrustums = false;
-
-    var mouseDown = false;
-    var mouseDownElementId;
-    var mouseDownAction = null; // Either "RotateScene" or "TimelineDrag"
-    var dragDeltas = 0; // Accumulates timeline drag deltas from the mouse (allows a smoother scroll)
-    var lastMouseX = null;
-    var lastMouseY = null;
-
-    function setupInput(canvas) {
-      canvas.onmousedown = handleMouseDown;
-      canvas.onmouseup = handleMouseUp;
-      canvas.onmousemove = handleMouseMove;
-      canvas.addEventListener('mouseout', onMouseOutOfCanvas, true); // Stop canvas input if mouse gets out of it      
-      canvas.onwheel = handleMouseWheel;
-      document.onkeydown = handleKeyDown;
-      canvas.addEventListener('touchstart', onTouchStart);
-      canvas.addEventListener('touchmove', onTouchMove);
-      canvas.addEventListener('touchend', onTouchEnd);
-    }
-
-    var touchFingers = {};
-    var startZoomDistance = -1;
-
-    function calculateTwoTouchPointsDistance() {
-      var distance = -1;
-      if (Object.keys(touchFingers).length == 2) { // Calculate starting zoom distance
-        var points = [];
-        for (var key in touchFingers) {
-          var point = [touchFingers[key].startX, touchFingers[key].startY];
-          points.push(point);
-        }        
-        distance = Math.sqrt(
-                              Math.pow(points[0][0] - points[1][0], 2) +
-                              Math.pow(points[0][1] - points[1][1], 2)
-                            );
-      }
-      return distance;
-    }
-
-    function getOffsetXY(e) { // Workaround for unsupported offsetX/offsetY (not yet standardized)
-      var getCumulativeOffset = function(child) {
-        var x = 0, y = 0;
-        while (child && !isNaN(child.offsetLeft) && !isNaN(child.offsetTop)) {
-          x += child.offsetLeft - child.scrollLeft;
-          y += child.offsetTop - child.scrollTop;
-          child = child.offsetParent;
-        }
-        return { top: y, left: x };
-      };      
-      if(e.offsetX == undefined) { // Slower but more compatible
-        var coffs = getCumulativeOffset(canvas);
-        return { top: e.pageY - coffs.top, left: e.pageX - coffs.left };
-      }
-      else
-        return { top: e.offsetY, left: e.offsetX };
-    }
-
-    function onTouchStart(event) {
-      event.preventDefault();
-      for (var i = 0; i < event.changedTouches.length; ++i) {
-        var touch = event.changedTouches[i];
-        var offXY = getOffsetXY(touch);
-        touchFingers[touch.identifier] = {
-          startX: parseInt(offXY.left),
-          startY: parseInt(offXY.top)
-        };
-        mouseDownAction = "RotateScene";
-        if (noTimelineOnFrustums == false) {
-          var timelineClick = executeColorPicking(offXY.left, offXY.top);
-          if (timelineClick)
-            mouseDownAction = "TimelineDrag";
-        }
-      }
-      startZoomDistance = calculateTwoTouchPointsDistance();
-    }
-
-    function onTouchMove(event) {
-      if (Object.keys(touchFingers).length == 1) {
-
-        var touch = touchFingers[event.changedTouches[0].identifier];
-        if (touch == undefined)
-          return;
-
-        var offXY = getOffsetXY(event.changedTouches[0]);
-        var newX = parseInt(offXY.left);
-        var newY = parseInt(offXY.top);
-
-        if (mouseDownAction == "RotateScene") { // Rotation
-
-          theta += (newX - touch.startX) / 10.0;
-          phi += (newY - touch.startY) / 10.0;
+      theta += (newX - touch.startX) / 10.0;
+      phi += (newY - touch.startY) / 10.0;
 
           if (theta >= 360.0) // Take a look at handleMouseMove() for more information
             theta = theta % 360.0;
@@ -862,420 +633,485 @@
       }
     }
 
-    function onMouseOutOfCanvas(event) {
-      var e = event.toElement || event.relatedTarget;
-      if (mouseDownElementId !== "canvas") // This is not handled for arrows
-        return;
-      handleMouseUp(event);
-    }
+function onMouseOutOfCanvas(event) 
+{
+  var e = event.toElement || event.relatedTarget;
+  if (mouseDownElementId !== "canvas") // This is not handled for arrows
+    return;
+  handleMouseUp(event);
+}
 
-    function handleMouseDown(event) {
-      mouseDown = true;
-      // Get element id (cross-browser friendly) where mouse was pressed
-      mouseDownElementId = event.target ? event.target.id : event.srcElement.id;
+function handleMouseDown(event) 
+{
+  mouseDown = true;
+  // Get element id (cross-browser friendly) where mouse was pressed
+  mouseDownElementId = event.target ? event.target.id : event.srcElement.id;
+  
+  var offXY = getOffsetXY(event);
+  lastMouseX = offXY.left;
+  lastMouseY = offXY.top;
+  
+  mouseDownAction = "RotateScene";
+  if (noTimelineOnFrustums == false) 
+  {
+    var timelineClick = executeColorPicking(lastMouseX, lastMouseY);
+    if (timelineClick)
+      mouseDownAction = "TimelineDrag";
+  }
+}
 
-      var offXY = getOffsetXY(event);
-      lastMouseX = offXY.left;
-      lastMouseY = offXY.top;
+function handleMouseUp(event) 
+{
+  mouseDown = false;
+  mouseDownElementId = null;
+}
 
-      mouseDownAction = "RotateScene";
-      if (noTimelineOnFrustums == false) {
-        var timelineClick = executeColorPicking(lastMouseX, lastMouseY);
-        if (timelineClick)
-          mouseDownAction = "TimelineDrag";
-      }
-    }
-
-    function handleMouseUp(event) {
-      mouseDown = false;
-      mouseDownElementId = null;
-    }
-
-    function handleMouseMove(event) {
+function handleMouseMove(event) 
+{  
+  if(!mouseDown)
+    return;
+  
+  var offXY = getOffsetXY(event);
+  var newX = offXY.left;
+  var newY = offXY.top;
+  var deltaX = newX - lastMouseX;
+  var deltaY = newY - lastMouseY;
+  
+  if (mouseDownElementId == "canvas")  
+  {
+    if (mouseDownAction == "RotateScene")  
+    {
+      var d_theta = deltaX / 10.0;
+      var d_phi   = deltaY / 10.0;
       
-      if(!mouseDown)
+      theta += d_theta;
+      if (theta >= 360.0) // Constrain theta in the [0;360] range
+        theta = theta % 360.0;
+      if (theta < 0.0)
+        theta += 360.0; 
+      
+      phi += d_phi;
+      if (phi > 90.0) phi = 90.0;   // Constrain phi in the [-90;90] range
+      if (phi < -90.0) phi = -90.0; // to avoid up vector problems
+      
+    } 
+    else if (mouseDownAction == "TimelineDrag") 
+    { 
+      // Only use deltaX here
+      if(deltaX > 0)       ++dragDeltas;
+      else if(deltaX < 0)  --dragDeltas;
+
+      if (dragDeltas > 5) 
+      {
+        increaseFrameWithBoundsChecking();
+        updateFrameEditBox(getCurrentFrameInGeosceneRange());
+        dragDeltas = 0;
+      } 
+      else 
+	if (dragDeltas < -5) 
+      {
+        decreaseFrameWithBoundsChecking();
+        updateFrameEditBox(getCurrentFrameInGeosceneRange());
+            dragDeltas = 0;
+      }
+      
+    }
+  }
+
+  lastMouseX = newX;
+  lastMouseY = newY;
+}
+
+function handleMouseWheel(event) 
+{
+  // Get cross-browser wheel delta
+  var delta = Math.max(-1, Math.min(1, (event.wheelDelta || -event.deltaY || -event.detail)));
+  //var delta = Math.max(-1, Math.min(1, event.wheelDelta));
+  
+  sphere_d += delta * -2.0;
+}
+
+function executeColorPicking(mouseX, mouseY) 
+{  
+  updateSceneMatrices();
+  
+  gl.bindFramebuffer(gl.FRAMEBUFFER, colorPickerFramebuffer);      
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  
+  var sh = glsl_programs.colorpicker;   gl.useProgram(sh);
+
+  gl.uniformMatrix4fv(sh.uniforms.uViewMVMatrix, false, modelViewMatrix);
+  gl.uniformMatrix4fv(sh.uniforms.uViewProjMatrix, false, perspectiveMatrix);
+  
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.triangle_indices);
+  gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
+  gl.vertexAttribPointer(glsl_programs.camera_frustum_lines.attributes.aPosition, 3, gl.FLOAT, false, 0, 0);
+  
+  var baseColor = [1.0, 0.0, 0.0, 1.0];
+  
+  var drawColorFrustum = function(geocastSequenceObject, mvMatrix, pMatrix) 
+  {
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastMVMatrix, false, mvMatrix);
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastProjMatrix, false, pMatrix);
+
+    var inverseMVMatrix = mat4.create();
+    var inversePMatrix = mat4.create();
+    mat4.invert(inverseMVMatrix, mvMatrix);
+    mat4.invert(inversePMatrix, pMatrix);
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastMVMatrix_Inverse, false, inverseMVMatrix);      
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastProjMatrix_Inverse, false,inversePMatrix);
+    
+    gl.uniform4fv(sh.uniforms.uColor, baseColor);
+
+    gl.drawElements(gl.TRIANGLES, camera_frustum_lines_data.triangle_indices_length, gl.UNSIGNED_SHORT, 0);
+  };
+  
+  for(var groupId in currentMatchGroups) 
+  {
+    if (currentMatchGroups[groupId] == false)
+      continue;
+    executeActionForObjectsInSequence(
+      geoScene.matchGroupSequence[groupId].matchCamSequence,
+      geoScene.geoCastSequence, drawColorFrustum, false);
+    executeActionForObjectsInSequence(
+      geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
+      geoScene.geoCastZSequence, drawColorFrustum, false);
+  }
+
+  // Detect the sequence object associated to where the mouse clicked
+  var pixel_data = new Uint8Array(4);
+  
+  // Remember that coordinates are upside down for pixel readbacks
+  gl.readPixels(mouseX, gl.canvas.height - mouseY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel_data);
+  
+  // Restore original framebuffer
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+  
+  return (pixel_data[0] != 0); // Timeline
+}
+
+function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, actionCallback, ignoreGeocast) 
+{
+  var orthoOrPerspMatrix = function(geocastObject) 
+  {
+    return (geocastObject.PerspMatrix != undefined) ? 
+      geocastObject.PerspMatrix : geocastObject.OrthoMatrix;
+  }
+
+  for (var objIndex in matchGroupSequence) 
+  {
+    var objName = matchGroupSequence[objIndex];
+    var geoCastSequenceObject = geocastSequence.find(function(element, index, array) {
+      if(element.name == objName)
+        return element;
+    });
+    if (geoCastSequenceObject == undefined || geoCastSequenceObject == null)
+      console.log("Could not find a geocast sequence object with key '" + objName + "'");
+    if (ignoreGeocast == false) {
+      var index = currentSceneFrame;
+      // console.log(geoCastSequenceObject.geocast);
+      //console.log("geocastseq length is " + geoCastSequenceObject.geocast.length);
+      
+      if (geoCastSequenceObject.geocast.length == 1)
+      {
+	alert("Length is only 1");
+        index = 0; // Deals with only one geocast case
+      }
+      //console.log("Examining geocat at index" + index + ":" + geoCastSequenceObject.geocast[index]);
+      
+      if (geoCastSequenceObject.geocast[index].ModelviewMatrix == undefined || 
+          geoCastSequenceObject.geocast[index].ModelviewMatrix == null) { // Caveat: do NOT check for the object itself (placeholders)
+          continue; // Sequence object not loaded yet
+      }
+      var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast[index]);
+      actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast[index].ModelviewMatrix, pMatrix);
+    } else {
+      actionCallback (geoCastSequenceObject);
+    }
+  }
+}
+
+function drawCameraFrustums() 
+{
+  var drawFrustum = function(mvMatrix, pMatrix, color) 
+  {
+    var inverseMVMatrix = mat4.create();
+    var inversePMatrix = mat4.create();
+    mat4.invert(inverseMVMatrix, mvMatrix);
+    mat4.invert(inversePMatrix, pMatrix);
+
+    var sh = glsl_programs.camera_frustum_lines;     gl.useProgram(sh);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.indices);
+    gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
+    gl.vertexAttribPointer(sh.attributes.aPosition, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(sh.attributes.aPosition);   
+    gl.uniformMatrix4fv(sh.uniforms.uViewMVMatrix, false, modelViewMatrix);
+    gl.uniformMatrix4fv(sh.uniforms.uViewProjMatrix, false, perspectiveMatrix);
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastMVMatrix, false, mvMatrix);
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastProjMatrix, false, pMatrix);
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastMVMatrix_Inverse, false, inverseMVMatrix);      
+    gl.uniformMatrix4fv(sh.uniforms.uGeoCastProjMatrix_Inverse, false, inversePMatrix);
+    gl.uniform4fv(sh.uniforms.uLineColor, color);
+    gl.drawElements(gl.LINES, camera_frustum_lines_data.indices_length, gl.UNSIGNED_SHORT, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+  
+  var drawSurfaceFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) 
+  { drawFrustum (mvMatrix, pMatrix, [0.5, 0.5, 0.5, 1.0]); }; // Z surfaces
+      
+  var drawCameraFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) 
+  {  drawFrustum (mvMatrix, pMatrix, [0.8, 0.0, 0.0, 1.0]);      };
+
+  for(var groupId in currentMatchGroups) 
+  {
+    if (currentMatchGroups[groupId] == false)
+      continue;
+
+    executeActionForObjectsInSequence(
+      geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
+      geoScene.geoCastZSequence, drawSurfaceFrustumCallback, false);
+
+    executeActionForObjectsInSequence(
+      geoScene.matchGroupSequence[groupId].matchCamSequence,
+      geoScene.geoCastSequence, drawCameraFrustumCallback, false);
+  }
+}
+
+function updateSceneMatrices() 
+{
+  mat4.identity(modelViewMatrix);
+  mat4.identity(perspectiveMatrix);
+  
+  // Calculate camera position (eye field) according to spherical coords
+  var cameraPos = vec3.create();
+  cameraPos[0] = sphere_d * Math.sin(degToRad(theta)) * Math.cos(degToRad(phi));  
+  cameraPos[1] = sphere_d * Math.cos(degToRad(theta)) * Math.cos(degToRad(phi));
+  cameraPos[2] = sphere_d * Math.sin(degToRad(phi));
+  
+  mat4.lookAt(modelViewMatrix, /* eye */ cameraPos, /* center */ projectionCenter, /* up */ [0, 0, 1]);
+  mat4.perspective(perspectiveMatrix, degToRad(45), gl.canvas.width / gl.canvas.height, 0.1, 5000.0);
+}
+
+var maximumCamTexturesEverBound = 0;
+
+function drawSurfaces() 
+{      
+  var drawSurface = function (id) 
+  {
+    var matchGroupId = id;
+    return function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) 
+    {        
+      var sh = glsl_programs.surface;      gl.useProgram(sh);
+      
+      if (texturesMap == undefined || texturesMap[geocastSequenceObject.name] == undefined)
         return;
-
-      var offXY = getOffsetXY(event);
-      var newX = offXY.left;
-      var newY = offXY.top;
-      var deltaX = newX - lastMouseX;
-      var deltaY = newY - lastMouseY;
-
-      if (mouseDownElementId == "canvas") { // Canvas handling
-
-        if (mouseDownAction == "RotateScene") { // Scene rotation handling
-
-          var d_theta = deltaX / 10.0;
-          var d_phi   = deltaY / 10.0;
-
-          theta += d_theta;
-          if (theta >= 360.0) // Constrain theta in the [0;360] range
-            theta = theta % 360.0;
-          if (theta < 0.0)
-            theta += 360.0; 
-         
-          phi += d_phi;
-          if (phi > 90.0) phi = 90.0;   // Constrain phi in the [-90;90] range
-          if (phi < -90.0) phi = -90.0; // to avoid up vector problems
-
-        } else if (mouseDownAction == "TimelineDrag") { // Timeline dragging handling
-
-          if(deltaX > 0) // Only use deltaX here
-            ++dragDeltas;
-          else if(deltaX < 0)
-            --dragDeltas;
-
-          if (dragDeltas > 5) {
-            increaseFrameWithBoundsChecking();
-            updateFrameEditBox(getCurrentFrameInGeosceneRange());
-            dragDeltas = 0;
-          } else if (dragDeltas < -5) {
-            decreaseFrameWithBoundsChecking();
-            updateFrameEditBox(getCurrentFrameInGeosceneRange());
-            dragDeltas = 0;
-          }
-
-        }
-      }
-
-      lastMouseX = newX;
-      lastMouseY = newY;
-    }
-
-    function handleMouseWheel(event) {
-      // Get cross-browser wheel delta
-      var delta = Math.max(-1, Math.min(1, (event.wheelDelta || -event.deltaY || -event.detail)));
-      //var delta = Math.max(-1, Math.min(1, event.wheelDelta));
- 
-      sphere_d += delta * -2.0;
-    }
-
-    function executeColorPicking(mouseX, mouseY) {
-
-      updateSceneMatrices();
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, colorPickerFramebuffer);      
-      gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-      gl.useProgram(colorPickerProgram);
-      gl.uniformMatrix4fv(colorPickerProgram.uViewMVMatrix, false /* WebGL supports column-major only */, modelViewMatrix);
-      gl.uniformMatrix4fv(colorPickerProgram.uViewProjMatrix, false /* WebGL supports column-major only */, perspectiveMatrix);
-
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.triangle_indices);
-      gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
-      gl.vertexAttribPointer(cameraFrustumLinesProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
-
-      var baseColor = [1.0, 0.0, 0.0, 1.0];
-
-      var drawColorFrustum = function(geocastSequenceObject, mvMatrix, pMatrix) {
-         gl.uniformMatrix4fv(colorPickerProgram.uGeoCastMVMatrix, false /* WebGL supports column-major only */, 
-        mvMatrix);
-        gl.uniformMatrix4fv(colorPickerProgram.uGeoCastProjMatrix, false /* WebGL supports column-major only */, 
-          pMatrix);
-        var inverseMVMatrix = mat4.create();
-        var inversePMatrix = mat4.create();
-        mat4.invert(inverseMVMatrix, mvMatrix);
-        mat4.invert(inversePMatrix, pMatrix);
-        gl.uniformMatrix4fv(colorPickerProgram.uGeoCastMVMatrix_Inverse, false /* WebGL supports column-major only */, 
-          inverseMVMatrix);      
-        gl.uniformMatrix4fv(colorPickerProgram.uGeoCastProjMatrix_Inverse, false /* WebGL supports column-major only */, 
-          inversePMatrix);
-
-        gl.uniform4fv(colorPickerProgram.uColor, baseColor);
-
-        gl.drawElements(gl.TRIANGLES, camera_frustum_lines_data.triangle_indices_length, gl.UNSIGNED_SHORT, 0);
-      };
-      for(var groupId in currentMatchGroups) {
-        if (currentMatchGroups[groupId] == false)
-          continue;
-        executeActionForObjectsInSequence(
-          geoScene.matchGroupSequence[groupId].matchCamSequence,
-          geoScene.geoCastSequence, drawColorFrustum, false);
-        executeActionForObjectsInSequence(
-          geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
-          geoScene.geoCastZSequence, drawColorFrustum, false);
-      }
-
-      // Detect the sequence object associated to where the mouse clicked
-      var pixel_data = new Uint8Array(4);
-      // Remember that coordinates are upside down for textures
-      gl.readPixels(mouseX, gl.viewportHeight - mouseY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel_data);
-
-      // Restore original framebuffer
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
-
-      if (pixel_data[0] == 0)
-        return false;
-      else
-        return true; // Timeline
-    }
-
-    function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, actionCallback, ignoreGeocast) {
-      var orthoOrPerspMatrix = function(geocastObject) {
-        return (geocastObject.PerspMatrix != undefined) ? 
-                geocastObject.PerspMatrix : geocastObject.OrthoMatrix;
-      }
-      for (var objIndex in matchGroupSequence) {
-        var objName = matchGroupSequence[objIndex];
-        var geoCastSequenceObject = geocastSequence.find(function(element, index, array) {
-          if(element.name == objName)
-            return element;
-        });
-        if (geoCastSequenceObject == undefined || geoCastSequenceObject == null)
-          console.log("Could not find a geocast sequence object with key '" + objName + "'");
-        if (ignoreGeocast == false) {
-          var index = currentSceneFrame;
-          if (geoCastSequenceObject.geocast.length == 1)
-            index = 0; // Deals with only one geocast case
-          if (geoCastSequenceObject.geocast[index].ModelviewMatrix == undefined || 
-              geoCastSequenceObject.geocast[index].ModelviewMatrix == null) { // Caveat: do NOT check for the object itself (placeholders)
-            continue; // Sequence object not loaded yet
-          }
-          var pMatrix = orthoOrPerspMatrix(geoCastSequenceObject.geocast[index]);
-          actionCallback (geoCastSequenceObject, geoCastSequenceObject.geocast[index].ModelviewMatrix, pMatrix);
-        } else {
-          actionCallback (geoCastSequenceObject);
-        }
-      }
-    }
-
-    function drawCameraFrustums() {
-      var drawFrustum = function(mvMatrix, pMatrix, color) {
-        var inverseMVMatrix = mat4.create();
-        var inversePMatrix = mat4.create();
-        mat4.invert(inverseMVMatrix, mvMatrix);
-        mat4.invert(inversePMatrix, pMatrix);
-        gl.useProgram(cameraFrustumLinesProgram);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, camera_frustum_lines_data.indices);
-        gl.bindBuffer(gl.ARRAY_BUFFER, camera_frustum_lines_data);
-        gl.vertexAttribPointer(cameraFrustumLinesProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
-        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uViewMVMatrix, false, modelViewMatrix);
-        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uViewProjMatrix, false, perspectiveMatrix);
-        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastMVMatrix, false, mvMatrix);
-        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastProjMatrix, false, pMatrix);
-        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastMVMatrix_Inverse, false, inverseMVMatrix);      
-        gl.uniformMatrix4fv(cameraFrustumLinesProgram.uGeoCastProjMatrix_Inverse, false, inversePMatrix);
-        gl.uniform4fv(cameraFrustumLinesProgram.uLineColor, color);
-        gl.drawElements(gl.LINES, camera_frustum_lines_data.indices_length, gl.UNSIGNED_SHORT, 0);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
-        gl.bindBuffer(gl.ARRAY_BUFFER, null);
-      }      
-      var drawSurfaceFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) { // Z surfaces
-        drawFrustum (mvMatrix, pMatrix, [0.5, 0.5, 0.5, 1.0]);
-      };      
-      var drawCameraFrustumCallback = function(geocastSequenceObject, mvMatrix, pMatrix) {
-        drawFrustum (mvMatrix, pMatrix, [0.8, 0.0, 0.0, 1.0]);
-      };
-      for(var groupId in currentMatchGroups) {
-        if (currentMatchGroups[groupId] == false)
-          continue;
-        executeActionForObjectsInSequence(
-          geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
-          geoScene.geoCastZSequence, drawSurfaceFrustumCallback, false);
-        executeActionForObjectsInSequence(
-          geoScene.matchGroupSequence[groupId].matchCamSequence,
-          geoScene.geoCastSequence, drawCameraFrustumCallback, false);
-      }
-    }
-
-    function updateSceneMatrices() {
-      mat4.identity(modelViewMatrix);
-      mat4.identity(perspectiveMatrix);
-
-      // Calculate camera position (eye field) according to spherical coords
-      var cameraPos = vec3.create();
-      cameraPos[0] = sphere_d * Math.sin(degToRad(theta)) * Math.cos(degToRad(phi));  
-      cameraPos[1] = sphere_d * Math.cos(degToRad(theta)) * Math.cos(degToRad(phi));
-      cameraPos[2] = sphere_d * Math.sin(degToRad(phi));
-
-      mat4.lookAt(modelViewMatrix, /* eye */ cameraPos, /* center */ projectionCenter, /* up */ [0, 0, 1]);
-      mat4.perspective(perspectiveMatrix, degToRad(45), gl.viewportWidth / gl.viewportHeight, 0.1, 5000.0);
-    }
-
-    var maximumCamTexturesEverBound = 0;
-
-    function drawSurfaces() {      
-
-      var drawSurface = function (id) {
-        var matchGroupId = id;
-        return function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) {        
-          gl.useProgram(surfaceProgram);
-
-          if (texturesMap == undefined || texturesMap[geocastSequenceObject.name] == undefined)
-            return;
-
-          var depthTextureFrameIndex = currentSceneFrame;
-          if (geocastSequenceObject.image.length == 1)
+      
+      var depthTextureFrameIndex = currentSceneFrame;
+      if (geocastSequenceObject.image.length == 1)
             depthTextureFrameIndex = 0;
-          
-          if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex] == undefined ||
-              texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)
-            return;
-          var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
-          if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
-            return; // Lattice hasn't been created yet / object not ready
-
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][depthTextureFrameIndex]);
-          gl.uniform1i(surfaceProgram.texDepthMapSampler, 0);
-
-          var matricesFloatArray = [];
-          var availableTexId = 1;
-          var textureUnitsToUse = [];
-          var textureKeys = [];
-          var detectedUnsafeToRenderTextures = false;
-          var cameraNameToCurrentIndex = {};
-          var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) {
-            if (availableTexId > 15)
-              console.log("Insufficient texture units");
-            var projectiveTextureFrameIndex = currentSceneFrame;
-            if (geocastSequenceObj.image.length == 1)
-              projectiveTextureFrameIndex = 0;
-            cameraNameToCurrentIndex[geocastSequenceObj.name] = projectiveTextureFrameIndex;
-            if(texturesMap[geocastSequenceObj.name][projectiveTextureFrameIndex].safeToRender == false) {
-              detectedUnsafeToRenderTextures = true;
-              return;
-            }
-            var mvpMat = mat4.create();
-            mat4.multiply(mvpMat, mvpMat, pMat);
-            var mvInverseMat = mat4.create(); // (Marco): Remember that Geocarve uses inverted MVs
-            mat4.invert(mvInverseMat, mvMat);
-            mat4.multiply(mvpMat, mvpMat, mvInverseMat);
-            matricesFloatArray.push.apply(matricesFloatArray, mvpMat);
-            textureUnitsToUse.push(availableTexId);
-            textureKeys.push(geocastSequenceObj.name);
-            ++availableTexId;
-          };
-          executeActionForObjectsInSequence(
-            geoScene.matchGroupSequence[matchGroupId].matchCamSequence, 
-            geoScene.geoCastSequence, bindGeocastInfo, false);
-
-          if (textureUnitsToUse.length == 0 || detectedUnsafeToRenderTextures == true)
-            return; // Textures not loaded yet
-
-          for (var i = 0; i < textureUnitsToUse.length; ++i) {
-            gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
-            var projectiveTextureFrameIndex = cameraNameToCurrentIndex[textureKeys[i]];
-            if (texturesMap[textureKeys[i]][projectiveTextureFrameIndex].safeToRender == false)
-              return;
-            gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][projectiveTextureFrameIndex]);
-          }
-          var shaderTextureUnitsArray = textureUnitsToUse;
-          if (shaderTextureUnitsArray.length < maximumCamTexturesEverBound) { // Workaround for chrome unbound texunit warnings
-            Array.prototype.push.apply(shaderTextureUnitsArray, new Uint8Array(maximumCamTexturesEverBound - shaderTextureUnitsArray.length));
-          } else if (shaderTextureUnitsArray.length > maximumCamTexturesEverBound) {
-            maximumCamTexturesEverBound = shaderTextureUnitsArray.length;
-          }
-          gl.uniform1iv(surfaceProgram.texGeocastSampler, shaderTextureUnitsArray);
-          gl.uniformMatrix4fv(surfaceProgram.uGeocastMVPMatrix, false, matricesFloatArray);
-          gl.uniform1f(surfaceProgram.uBoundSlots, textureUnitsToUse.length);
-          gl.uniform1f(surfaceProgram.uShowWireframe, wireframeEnabled == true ? 1.0 : 0.0);
-          
-          var inverseMVMatrix = mat4.create();
-          var inversePMatrix = mat4.create();
-          mat4.invert(inverseMVMatrix, mvMatrix);
-          mat4.invert(inversePMatrix, pMatrix);
-          gl.uniformMatrix4fv(surfaceProgram.uFloorMVMatrix, false, mvMatrix);
-          gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix, false, pMatrix);
-          gl.uniformMatrix4fv(surfaceProgram.uFloorMVMatrix_Inverse, false, inverseMVMatrix);
-          gl.uniformMatrix4fv(surfaceProgram.uFloorProjMatrix_Inverse, false, inversePMatrix);
-          gl.uniformMatrix4fv(surfaceProgram.uViewMVMatrix, false, modelViewMatrix);
-          gl.uniformMatrix4fv(surfaceProgram.uViewProjMatrix, false, perspectiveMatrix);
-          var geocastFrameIndex = currentSceneFrame;
-          if (geocastSequenceObject.geocast.length == 1)
-            geocastFrameIndex = 0;
-          var zRange = (geocastSequenceObject.geocast[geocastFrameIndex].ProjRange != undefined) ? 
-                        geocastSequenceObject.geocast[geocastFrameIndex].ProjRange : geocastSequenceObject.geocast[geocastFrameIndex].ClipRange;
-          gl.uniform2fv(surfaceProgram.uFloorClipRange, zRange);
-
-          gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[resKey]);
-          gl.vertexAttribPointer(surfaceProgram.aPosition, 3, gl.FLOAT, false, 0, 0);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, latticeGridCache[resKey].n_of_vertices);
-          
-          gl.bindTexture(gl.TEXTURE_2D, null);
-          gl.bindBuffer(gl.ARRAY_BUFFER, null);
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, null);
-          for (var i = 0; i < textureUnitsToUse.length; ++i) {
-            gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
-            gl.bindTexture(gl.TEXTURE_2D, null);
-          }
-          gl.useProgram(null);
-        };
+      
+      if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex] == undefined ||
+          texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)
+        return;
+      var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
+      if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
+        return; // Lattice hasn't been created yet / object not ready
+      
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][depthTextureFrameIndex]);
+      gl.uniform1i(sh.uniforms.texDepthMapSampler, 0);
+      
+      var matricesFloatArray = [];
+      var availableTexId = 1;
+      var textureUnitsToUse = [];
+      var textureKeys = [];
+      var detectedUnsafeToRenderTextures = false;
+      var cameraNameToCurrentIndex = {};
+      var bindGeocastInfo = function(geocastSequenceObj, mvMat, pMat) 
+      {
+        if (availableTexId > 15)
+          console.log("Insufficient texture units");
+        var projectiveTextureFrameIndex = currentSceneFrame;
+        if (geocastSequenceObj.image.length == 1)
+          projectiveTextureFrameIndex = 0;
+        cameraNameToCurrentIndex[geocastSequenceObj.name] = projectiveTextureFrameIndex;
+        if(texturesMap[geocastSequenceObj.name][projectiveTextureFrameIndex].safeToRender == false) 
+	{
+          detectedUnsafeToRenderTextures = true;
+          return;
+        }
+        var mvpMat = mat4.create();
+        mat4.multiply(mvpMat, mvpMat, pMat);
+        var mvInverseMat = mat4.create(); // (Marco): Remember that Geocarve uses inverted MVs
+        mat4.invert(mvInverseMat, mvMat);
+        mat4.multiply(mvpMat, mvpMat, mvInverseMat);
+        matricesFloatArray.push.apply(matricesFloatArray, mvpMat);
+        textureUnitsToUse.push(availableTexId);
+        textureKeys.push(geocastSequenceObj.name);
+        ++availableTexId;
       };
-      for(var groupId in currentMatchGroups) {
-        if (currentMatchGroups[groupId] == false)
-          continue;
-        executeActionForObjectsInSequence(
-          geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
-          geoScene.geoCastZSequence, drawSurface(groupId), false);
+      executeActionForObjectsInSequence(
+        geoScene.matchGroupSequence[matchGroupId].matchCamSequence, 
+        geoScene.geoCastSequence, bindGeocastInfo, false);
+      
+      if (textureUnitsToUse.length == 0 || detectedUnsafeToRenderTextures == true)
+        return; // Textures not loaded yet
+      
+      for (var i = 0; i < textureUnitsToUse.length; ++i) {
+        gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
+        var projectiveTextureFrameIndex = cameraNameToCurrentIndex[textureKeys[i]];
+        if (texturesMap[textureKeys[i]][projectiveTextureFrameIndex].safeToRender == false)
+          return;
+        gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][projectiveTextureFrameIndex]);
       }
-    }
 
-    function drawScene() {
-      if (geoScene == null)
-        return; // Still loading..
-
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
-
-      updateSceneMatrices();
-      drawCameraFrustums();
-      drawSurfaces();
-    }
-
-    function paintLoop() {
-      requestAnimFrame(paintLoop);
-      drawScene();
-    }
-
-    // UI related routines
-    function activateMatchgroup(id, activate) {
-      if (activate) {
-        document.getElementById("matchgroup_checkbox_" + id).checked = true;
-        currentMatchGroups[id] = true;
-      } else {
-        document.getElementById("matchgroup_checkbox_" + id).checked = false;
-        currentMatchGroups[id] = false;
+      var shaderTextureUnitsArray = textureUnitsToUse;
+      if (shaderTextureUnitsArray.length < maximumCamTexturesEverBound) { // Workaround for chrome unbound texunit warnings
+        Array.prototype.push.apply(shaderTextureUnitsArray, new Uint8Array(maximumCamTexturesEverBound - shaderTextureUnitsArray.length));
+      } else if (shaderTextureUnitsArray.length > maximumCamTexturesEverBound) {
+        maximumCamTexturesEverBound = shaderTextureUnitsArray.length;
       }
-    }
 
-    function handleWireframeClick(checkbox) {
-      wireframeEnabled = checkbox.checked;
-    }
+      // this is broken (glsl.js should do this, but cant handle array uniforms!)
+      //sh.uniforms.texGeocastSampler = gl.getUniformLocation(sh, "texGeocastSampler[0]");   
+      //sh.uniforms.uGeocastMVPMatrix = gl.getUniformLocation(sh, "uGeocastMVPMatrix[0]");   
 
-    function deactivateTimelineClick(checkbox) {
-      noTimelineOnFrustums = checkbox.checked;
-    }
+      gl.uniform1iv(sh.uniforms.texGeocastSampler, shaderTextureUnitsArray);
+      gl.uniformMatrix4fv(sh.uniforms.uGeocastMVPMatrix, false, matricesFloatArray);
 
-    function handleMatchgroupClick(checkbox, id) {
-      if (checkbox.checked == true)
-        activateMatchgroup(id, true);
-      else
-        activateMatchgroup(id, false);
-    }
-
-    function handleFrameChange(inputbox) {
-      var newValue;
-      if (inputbox.value == '')
-        newValue = geoScene.sequence[0];
-      else {
-        newValue = parseInt(inputbox.value);
-        if (newValue == NaN)
-          newValue = geoScene.sequence[0];
+      gl.uniform1f(sh.uniforms.uBoundSlots, textureUnitsToUse.length);
+      gl.uniform1f(sh.uniforms.uShowWireframe, wireframeEnabled == true ? 1.0 : 0.0);
+      
+      var inverseMVMatrix = mat4.create();
+      var inversePMatrix = mat4.create();
+      mat4.invert(inverseMVMatrix, mvMatrix);
+      mat4.invert(inversePMatrix, pMatrix);
+      gl.uniformMatrix4fv(sh.uniforms.uFloorMVMatrix, false, mvMatrix);
+      gl.uniformMatrix4fv(sh.uniforms.uFloorProjMatrix, false, pMatrix);
+      gl.uniformMatrix4fv(sh.uniforms.uFloorMVMatrix_Inverse, false, inverseMVMatrix);
+      gl.uniformMatrix4fv(sh.uniforms.uFloorProjMatrix_Inverse, false, inversePMatrix);
+      gl.uniformMatrix4fv(sh.uniforms.uViewMVMatrix, false, modelViewMatrix);
+      gl.uniformMatrix4fv(sh.uniforms.uViewProjMatrix, false, perspectiveMatrix);
+      
+      var geocastFrameIndex = currentSceneFrame;
+      if (geocastSequenceObject.geocast.length == 1)
+        geocastFrameIndex = 0;
+      
+      var zRange = (geocastSequenceObject.geocast[geocastFrameIndex].ProjRange != undefined) ? 
+        geocastSequenceObject.geocast[geocastFrameIndex].ProjRange : geocastSequenceObject.geocast[geocastFrameIndex].ClipRange;
+      gl.uniform2fv(sh.uniforms.uFloorClipRange, zRange);
+      
+      gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[resKey]);
+      gl.vertexAttribPointer(sh.attributes.aPosition, 4, gl.FLOAT, false, 0, 0);
+      
+      gl.uniform2f(sh.uniforms.delta, 1.0/latticeGridCache[resKey].width, 1.0/latticeGridCache[resKey].height);
+      
+      //gl.drawArrays(gl.TRIANGLE_STRIP, 0, latticeGridCache[resKey].n_of_vertices);
+      gl.drawArrays(gl.TRIANGLES, 0, latticeGridCache[resKey].n_of_vertices);
+      //      console.log("Drawing " + latticeGridCache[resKey].n_of_vertices + " vertices as triangles for lattice.");
+      
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      for (var i = 0; i < textureUnitsToUse.length; ++i) 
+      {
+        gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
+        gl.bindTexture(gl.TEXTURE_2D, null);
       }
-      var rangeCheckedValue = setFrameWithBoundsChecking(newValue);
-      inputbox.value = rangeCheckedValue;
-    }
+      gl.useProgram(null);
+    };
+  };
 
-    function updateFrameEditBox(value) {
-      document.getElementById("numberbox_frame").value = value;
-    }
-  </script>
+  for(var groupId in currentMatchGroups) 
+  {
+    if (currentMatchGroups[groupId] == false)
+      continue;
+
+    executeActionForObjectsInSequence(
+      geoScene.matchGroupSequence[groupId].matchSurfaceSequence,
+      geoScene.geoCastZSequence, drawSurface(groupId), false);
+  }
+}
+
+function drawScene() 
+{
+  if (geoScene == null) return; // Still loading..
+  
+  if (glsl_programs.ready)
+  {
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+    updateSceneMatrices();
+    drawCameraFrustums();
+    drawSurfaces();
+  }
+
+}
+
+function paintLoop() 
+{
+  requestAnimFrame(paintLoop);
+  drawScene();
+}
+
+// UI related routines
+function activateMatchgroup(id, activate) 
+{
+  if (activate) 
+  {
+    document.getElementById("matchgroup_checkbox_" + id).checked = true;
+    currentMatchGroups[id] = true;
+  } else {
+    document.getElementById("matchgroup_checkbox_" + id).checked = false;
+    currentMatchGroups[id] = false;
+  }
+}
+
+function handleWireframeClick(checkbox) 
+{
+  wireframeEnabled = checkbox.checked;
+}
+
+function deactivateTimelineClick(checkbox) 
+{
+  noTimelineOnFrustums = checkbox.checked;
+}
+
+function handleMatchgroupClick(checkbox, id) 
+{
+  activateMatchgroup(id, checkbox.checked);
+}
+
+function handleFrameChange(inputbox) 
+{
+  var newValue;
+
+  if (inputbox.value == '')
+    newValue = geoScene.sequence[0];
+  else 
+  {
+    newValue = parseInt(inputbox.value);
+    if (newValue == NaN)
+      newValue = geoScene.sequence[0];
+  }
+
+  var rangeCheckedValue = setFrameWithBoundsChecking(newValue);
+  inputbox.value = rangeCheckedValue;
+}
+
+function updateFrameEditBox(value) 
+{
+  document.getElementById("numberbox_frame").value = value;
+}
+
+</script>
+
 <body onload="webGLStart();" onresize="onResizeCanvas();">
   <div class="content-div">
     <div class="header">
