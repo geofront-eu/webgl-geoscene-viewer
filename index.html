@@ -1,21 +1,21 @@
 <html>
-<head>
-  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-  <title>geocast viewer - WebGL</title>
-  <meta name="description" content="GeoCast in WebGL">
-  <meta name="keywords" content="geofront,geocarve,geoscene,geocast,online,webgl,viewer">
-  <meta name="viewport" content="width=device-width, user-scalable=no">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>geocast viewer - WebGL</title>
+    <meta name="description" content="GeoCast in WebGL">
+    <meta name="keywords" content="geofront,geocarve,geoscene,geocast,online,webgl,viewer">
+    <meta name="viewport" content="width=device-width, user-scalable=no">
+    
+    <link href="css/style.css" rel="stylesheet">
+    
+    
+    <script src="utils/glsl.js"></script>
+    <script type="text/javascript" src="utils/js-geoscene-reader/gl-matrix-min.js"></script>
+    <script type="text/javascript" src="utils/js-geoscene-reader/geoscene-filereader.js"></script>
+<!--    <script type="text/javascript" src="utils/webgl-utils.js"></script> -->
+<!--    <script type="text/javascript" src="utils/webgl-debug.js"></script> --> 
+  </head>
   
-  <link href="css/style.css" rel="stylesheet">
-
-
-<script src="utils/glsl.js"></script>
-  <script type="text/javascript" src="utils/js-geoscene-reader/gl-matrix-min.js"></script>
-  <script type="text/javascript" src="utils/js-geoscene-reader/geoscene-filereader.js"></script>
-  <script type="text/javascript" src="utils/webgl-utils.js"></script>
-  <script type="text/javascript" src="utils/webgl-debug.js"></script>  
-</head>
-
 <script type="text/javascript">
 
 "use strict";
@@ -85,8 +85,10 @@ function webGLStart()
       loadTexturesForFrame(currentSceneFrame);
   };
   
-  updateLoadingProgress("Reading Geoscene", 10);
+  updateLoadingProgress("Reading GeoScene", 10);
   readGeoSceneFile("data/sedan/sedan.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+  //readGeoSceneFile("data/20160318_street_camviews_on_proxy/scene.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
+  //readGeoSceneFile("data/20160428_arch_sweep/scene.geoscene", geoSceneObjectReady); // DEBUG - Local path for tests
   
   paintLoop();
 }
@@ -222,58 +224,62 @@ function hideLoadingProgress()
   document.getElementById("loadingDiv").style.display = 'none';
 }
 
-    var alreadyLoadedFrame = {};
-    function loadTexturesForFrame(frame) {
+var alreadyLoadedFrame = {};
 
-      if (alreadyLoadedFrame[frame] != undefined && alreadyLoadedFrame[frame] == true)
-        return;
+function loadTexturesForFrame(frame) 
+{
+  if (alreadyLoadedFrame[frame] != undefined && alreadyLoadedFrame[frame] == true)
+    console.log("Already loaded this frame I think?");
 
-      if (frame == currentSceneFrame) // Only update progress bar if still in the current frame
-        updateLoadingProgress("Readying Requests", 0);
-
-      var loadTextureFromFileForCurrentFrame = (
-	function (frame) 
+  if (frame == currentSceneFrame) // Only update progress bar if still in the current frame
+    updateLoadingProgress("Readying Requests", 0);
+  
+  var loadTextureFromFileForCurrentFrame = 
+    (
+      function (frame) 
+      {
+        var storedFrame = frame;
+        return function(geocastSequenceObject) 
 	{
-          var storedFrame = frame;
-          return function(geocastSequenceObject) 
-	  {
-            if (texturesMap[geocastSequenceObject.name] == undefined)
-              texturesMap[geocastSequenceObject.name] = {};
+	  console.log("Loading NOW textures for file " + geocastSequenceObject.name);
+	  
+          if (texturesMap[geocastSequenceObject.name] == undefined)
+            texturesMap[geocastSequenceObject.name] = {};
           
-	    var textureIndex = storedFrame;
-            if (geocastSequenceObject.image.length == 1)
-              textureIndex = 0; // Deals with the 1-texture only case
-            if(texturesMap[geocastSequenceObject.name][textureIndex] != undefined) 
-	    {
-              if (storedFrame == currentSceneFrame) // Only update progress bar if still in the current frame
-                updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
-              return; // Already in memory
-            }
-
-            texturesMap[geocastSequenceObject.name][textureIndex] = gl.createTexture();
-            texturesMap[geocastSequenceObject.name][textureIndex].image = new Image();
-            texturesMap[geocastSequenceObject.name][textureIndex].safeToRender = false;
-            texturesMap[geocastSequenceObject.name][textureIndex].image.onload = 
-	      (function (j, f) 
+	  var textureIndex = storedFrame;
+          if (geocastSequenceObject.image.length == 1)
+            textureIndex = 0; // Deals with the 1-texture only case
+          if(texturesMap[geocastSequenceObject.name][textureIndex] != undefined) 
+	  {
+            if (storedFrame == currentSceneFrame) // Only update progress bar if still in the current frame
+              updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
+            return; // Already in memory
+          }
+	  
+          texturesMap[geocastSequenceObject.name][textureIndex] = gl.createTexture();
+          texturesMap[geocastSequenceObject.name][textureIndex].image = new Image();
+          texturesMap[geocastSequenceObject.name][textureIndex].safeToRender = false;
+          texturesMap[geocastSequenceObject.name][textureIndex].image.onload = 
+	    (function (j, f) 
+	     {
+	       var index = j;
+	       var frameWhichRequestedLoading = f;
+	       return function() 
 	       {
-		 var index = j;
-		 var frameWhichRequestedLoading = f;
-		 return function() 
-		 {
-		   gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
-		   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-		   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
-		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-		   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		   gl.bindTexture(gl.TEXTURE_2D, null);
-		   texturesMap[geocastSequenceObject.name][index].safeToRender = true;
-		   if (frameWhichRequestedLoading == currentSceneFrame) // Only update progress bar if still in the current frame
-                     updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
-		 };
-               })(textureIndex, storedFrame);
-            texturesMap[geocastSequenceObject.name][textureIndex].image.src = geocastSequenceObject.image[textureIndex];     
+		 gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
+		 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+		 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
+		 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		 gl.bindTexture(gl.TEXTURE_2D, null);
+		 texturesMap[geocastSequenceObject.name][index].safeToRender = true;
+		 if (frameWhichRequestedLoading == currentSceneFrame) // Only update progress bar if still in the current frame
+                   updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
+	       };
+             })(textureIndex, storedFrame);
+          texturesMap[geocastSequenceObject.name][textureIndex].image.src = geocastSequenceObject.image[textureIndex];     
         }
       });
 
@@ -283,14 +289,10 @@ function hideLoadingProgress()
 
       for(var groupId in currentMatchGroups) 
       {
-        if (currentMatchGroups[groupId] == false)
-          continue;
-        geoScene.matchGroupSequence[groupId].matchSurfaceSequence.forEach(function(entry) {
-          isSequenceObjectUsed[entry] = true;
-        });
-        geoScene.matchGroupSequence[groupId].matchCamSequence.forEach(function(entry) {
-          isSequenceObjectUsed[entry] = true;
-        });
+        //if (currentMatchGroups[groupId] == false) continue;
+
+        geoScene.matchGroupSequence[groupId].matchSurfaceSequence.forEach(function(entry) { isSequenceObjectUsed[entry] = true; });
+        geoScene.matchGroupSequence[groupId].matchCamSequence.forEach(function(entry) { isSequenceObjectUsed[entry] = true; });
       
         geoScene.geoCastSequence.forEach(function(entry) {
           if (isSequenceObjectUsed[entry.name] == true)
@@ -321,45 +323,43 @@ function loadTextures()
 
   var loadTextureFromFile = function(geocastSequenceObject) 
   {
-    if (texturesMap[geocastSequenceObject.name] != undefined)
-      return;
-        texturesMap[geocastSequenceObject.name] = [];
-        var numberOfTextures = geoScene.sequence[1] - geoScene.sequence[0] + 1; // Both bounds inclusive
-        if (geocastSequenceObject.image.length == 1)
-          numberOfTextures = 1; // Deals with the 1-texture only case
-        for (var i = 0; i < numberOfTextures; ++i) {
-          texturesMap[geocastSequenceObject.name].push(new Object());
-          texturesMap[geocastSequenceObject.name][i] = gl.createTexture();
-          texturesMap[geocastSequenceObject.name][i].image = new Image();
-          texturesMap[geocastSequenceObject.name][i].safeToRender = false;
-          texturesMap[geocastSequenceObject.name][i].image.onload = (function (j) {
-            var index = j;
-            return function() {
-              gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
-              gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-              gl.bindTexture(gl.TEXTURE_2D, null);
-              texturesMap[geocastSequenceObject.name][index].safeToRender = true;
-              updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
-            };
-          })(i);          
-          texturesMap[geocastSequenceObject.name][i].image.src = geocastSequenceObject.image[i]; 
-        }        
-      };
+    if (texturesMap[geocastSequenceObject.name] != undefined) return;
+    texturesMap[geocastSequenceObject.name] = [];
+    var numberOfTextures = geoScene.sequence[1] - geoScene.sequence[0] + 1; // Both bounds inclusive
+    if (geocastSequenceObject.image.length == 1)
+      numberOfTextures = 1; // Deals with the 1-texture only case
+    for (var i = 0; i < numberOfTextures; ++i) 
+    {
+      texturesMap[geocastSequenceObject.name].push(new Object());
+      texturesMap[geocastSequenceObject.name][i] = gl.createTexture();
+      texturesMap[geocastSequenceObject.name][i].image = new Image();
+      texturesMap[geocastSequenceObject.name][i].safeToRender = false;
+      texturesMap[geocastSequenceObject.name][i].image.onload = 
+	(function (j) {
+          var index = j;
+          return function() {
+            gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][index]);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texturesMap[geocastSequenceObject.name][index].image);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.bindTexture(gl.TEXTURE_2D, null);
+            texturesMap[geocastSequenceObject.name][index].safeToRender = true;
+            updateLoadingProgress("Loading Textures", 100 * (++loadedTextures / totalNumberOfTextures), true);
+          };
+        })(i);          
+      texturesMap[geocastSequenceObject.name][i].image.src = geocastSequenceObject.image[i]; 
+    }        
+  };
 
-      var isSequenceObjectUsed = {}; // Allows fast usage checking for a sequence object
-      for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
-        geoScene.matchGroupSequence[i].matchSurfaceSequence.forEach(function(entry) {
-          isSequenceObjectUsed[entry] = true;
-        });
-        geoScene.matchGroupSequence[i].matchCamSequence.forEach(function(entry) {
-          isSequenceObjectUsed[entry] = true;
-        });
-      }
+  var isSequenceObjectUsed = {}; // Allows fast usage checking for a sequence object
+  for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) 
+  {
+    geoScene.matchGroupSequence[i].matchSurfaceSequence.forEach(function(entry) {  isSequenceObjectUsed[entry] = true; });
+    geoScene.matchGroupSequence[i].matchCamSequence.forEach(function(entry) { isSequenceObjectUsed[entry] = true;});
+  }
 
       totalNumberOfTextures = 0;
       loadedTextures = 0;
@@ -372,7 +372,8 @@ function loadTextures()
           totalNumberOfTextures += entry.image.length;
       });
       updateLoadingProgress("Loading Textures", 0);
-      for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) {
+      for (var i = 0; i < geoScene.matchGroupSequence.length; ++i) 
+  {
         executeActionForObjectsInSequence(
           geoScene.matchGroupSequence[i].matchSurfaceSequence,
           geoScene.geoCastZSequence, loadTextureFromFile, true);
@@ -380,7 +381,7 @@ function loadTextures()
           geoScene.matchGroupSequence[i].matchCamSequence, 
           geoScene.geoCastSequence, loadTextureFromFile, true);
       }
-    }
+}
 
 var camera_frustum_lines_data;
 
@@ -817,7 +818,7 @@ function executeActionForObjectsInSequence(matchGroupSequence, geocastSequence, 
       
       if (geoCastSequenceObject.geocast.length == 1)
       {
-	alert("Length is only 1");
+	// console.log("Length is only 1");
         index = 0; // Deals with only one geocast case
       }
       //console.log("Examining geocat at index" + index + ":" + geoCastSequenceObject.geocast[index]);
@@ -905,26 +906,29 @@ function drawSurfaces()
     var matchGroupId = id;
     return function(geocastSequenceObject /* ZSurface */, mvMatrix, pMatrix) 
     {        
-      var sh = glsl_programs.surface;      gl.useProgram(sh);
-      
-      if (texturesMap == undefined || texturesMap[geocastSequenceObject.name] == undefined)
-        return;
+      //console.log("drawSurface object function call for "  + geocastSequenceObject.name); 
+
+      var sh = glsl_programs.surface;      
+      gl.useProgram(sh);
+
+      //if (texturesMap == undefined) console.log("texturesMap undefined!");
+      //if (texturesMap[geocastSequenceObject.name] == undefined) console.log("texturesMap for this object undefined!");
       
       var depthTextureFrameIndex = currentSceneFrame;
       if (geocastSequenceObject.image.length == 1)
             depthTextureFrameIndex = 0;
       
-      if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex] == undefined ||
-          texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)
-        return;
+      //if (texturesMap[geocastSequenceObject.name][depthTextureFrameIndex] == undefined ||
+      //    texturesMap[geocastSequenceObject.name][depthTextureFrameIndex].safeToRender == false)        return;
       var resKey = geocastSequenceObject.size[0] + 'x' + geocastSequenceObject.size[1];
-      if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
-        return; // Lattice hasn't been created yet / object not ready
+
+      //if (Object.keys(latticeGridCache).length == 0 || latticeGridCache[resKey] == undefined)
+      //  return; // Lattice hasn't been created yet / object not ready
       
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texturesMap[geocastSequenceObject.name][depthTextureFrameIndex]);
       gl.uniform1i(sh.uniforms.texDepthMapSampler, 0);
-      
+
       var matricesFloatArray = [];
       var availableTexId = 1;
       var textureUnitsToUse = [];
@@ -959,13 +963,13 @@ function drawSurfaces()
         geoScene.geoCastSequence, bindGeocastInfo, false);
       
       if (textureUnitsToUse.length == 0 || detectedUnsafeToRenderTextures == true)
-        return; // Textures not loaded yet
+			  { console.log("Textures not loaded yet!"); return; }
       
-      for (var i = 0; i < textureUnitsToUse.length; ++i) {
+      for (var i = 0; i < textureUnitsToUse.length; ++i) 
+      {
         gl.activeTexture(gl.TEXTURE0 + textureUnitsToUse[i]);
         var projectiveTextureFrameIndex = cameraNameToCurrentIndex[textureKeys[i]];
-        if (texturesMap[textureKeys[i]][projectiveTextureFrameIndex].safeToRender == false)
-          return;
+        //if (texturesMap[textureKeys[i]][projectiveTextureFrameIndex].safeToRender == false) return;
         gl.bindTexture(gl.TEXTURE_2D, texturesMap[textureKeys[i]][projectiveTextureFrameIndex]);
       }
 
@@ -1004,13 +1008,12 @@ function drawSurfaces()
       var zRange = (geocastSequenceObject.geocast[geocastFrameIndex].ProjRange != undefined) ? 
         geocastSequenceObject.geocast[geocastFrameIndex].ProjRange : geocastSequenceObject.geocast[geocastFrameIndex].ClipRange;
       gl.uniform2fv(sh.uniforms.uFloorClipRange, zRange);
-      
+       
       gl.bindBuffer(gl.ARRAY_BUFFER, latticeGridCache[resKey]);
       gl.vertexAttribPointer(sh.attributes.aPosition, 4, gl.FLOAT, false, 0, 0);
       
       gl.uniform2f(sh.uniforms.delta, 1.0/latticeGridCache[resKey].width, 1.0/latticeGridCache[resKey].height);
       
-      //gl.drawArrays(gl.TRIANGLE_STRIP, 0, latticeGridCache[resKey].n_of_vertices);
       gl.drawArrays(gl.TRIANGLES, 0, latticeGridCache[resKey].n_of_vertices);
       //      console.log("Drawing " + latticeGridCache[resKey].n_of_vertices + " vertices as triangles for lattice.");
       
@@ -1056,7 +1059,7 @@ function drawScene()
 
 function paintLoop() 
 {
-  requestAnimFrame(paintLoop);
+  requestAnimationFrame(paintLoop);
   drawScene();
 }
 
@@ -1065,8 +1068,11 @@ function activateMatchgroup(id, activate)
 {
   if (activate) 
   {
+    console.log("Activating matchgroup " + id);
+
     document.getElementById("matchgroup_checkbox_" + id).checked = true;
     currentMatchGroups[id] = true;
+    loadTexturesForFrame(currentSceneFrame);
   } else {
     document.getElementById("matchgroup_checkbox_" + id).checked = false;
     currentMatchGroups[id] = false;
@@ -1122,6 +1128,7 @@ function updateFrameEditBox(value)
         <label for="wireframe_checkbox" class="aligncheckbox"><input type="checkbox" id="checkbox_wireframe" class="aligncheckbox" onclick="handleWireframeClick(this);"/><span>&nbsp;Toggle Wireframe</span></label><br/>
         <label for="deactivatetimeline_checkbox" class="aligncheckbox"><input type="checkbox" id="deactivatetimeline_checkbox" class="aligncheckbox" onclick="deactivateTimelineClick(this);"/><span>&nbsp;No Frustum Scroll</span></label><br/>
         <p>Frame <span id="rangeFrame">[]</span>&nbsp;&nbsp;<input id="numberbox_frame" class="numberbox" type="number" value="0" min="0" max="999" onchange="handleFrameChange(this);"/></p>
+    <p>(Timestep: Arrowkey left/right)
         <p>Active MatchGroups<br/><div id="matchgroups_div"></div></p>        
       </div>
       <div id="loadingDiv"><label for="loadingBar"><span id="loadingText"></span>&nbsp;&nbsp;<progress id="loadingBar" value="0" max="100"></progress></label></div>

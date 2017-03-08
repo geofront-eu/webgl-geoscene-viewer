@@ -1,6 +1,6 @@
 function glsl_log(string)
 {
-  console.log(string);
+  //console.log(string);
 }
 
 function glsl_error(string)
@@ -35,7 +35,7 @@ function glsl_retrieve_program_variables(gl, program)
     if (uniform_name.endsWith("[0]"))
 	{
 	  uniform_name = uniform_name.substring(0, uniform_name.length-3);
-	  glsl_log("Cutting out [0] from uniform_name! Result is :" + uniform_name);	  
+	  glsl_log("Cutting out [0] from uniform_name! Result is : " + uniform_name);	  
 	}
     
     program.uniforms[uniform_name] = gl.getUniformLocation(program, uniform_name);
