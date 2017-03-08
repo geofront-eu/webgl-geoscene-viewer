@@ -1,0 +1,7 @@
+Header unset Pragma
+FileETag None
+Header unset ETag
+
+<FilesMatch "\.(glsl)$">
+Header set Cache-Control "max-age=0"
+</FilesMatch>
